@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+hubspot-api-client
+slack-sdk
+google-api-python-client
+google-auth
+python-quickbooks
+anthropic
+sqlalchemy
+psycopg2-binary
+python-dotenv
+requests

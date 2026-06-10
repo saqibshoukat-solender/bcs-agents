@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}Configurations — BCS Agents{% endblock %}
+{% block heading %}Configurations{% endblock %}
+
+{% block content %}
+
+{# ── Inline macros (must live inside a block when using extends) ── #}
+{% macro text_field(fname, label, val='', ph='') %}
+<div>
+  <label class="block text-xs font-medium text-slate-600 mb-1">{{ label }}</label>
+  <input type="text" name="{{ fname }}" value="{{ val }}" placeholder="{{ ph }}"
+    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"/>
+</div>
+{% endmacro %}
+
+{% macro pwd_field(fid, label, val='') %}
+<div>
+  <label class="block text-xs font-medium text-slate-600 mb-1">{{ label }}</label>
+  <div class="relative">
+    <input id="{{ fid }}" type="password" name="{{ fid }}" value="{{ val }}"
+      class="w-full px-3 py-2 pr-10 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"/>
+    <button type="button" onclick="togglePwd('{{ fid }}', this)"
+      class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+      </svg>
+    </button>
+  </div>
+</div>
+{% endmacro %}
+
+{% macro howto(title, steps) %}
+<details class="mt-4 group">
+  <summary class="cursor-pointer list-none flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
+    <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+    </svg>
+    {{ title }}
+  </summary>
+  <ol class="mt-2.5 ml-1 space-y-1.5 text-xs text-slate-500 list-decimal list-inside">
+    {% for step in steps %}
+    <li>{{ step | safe }}</li>
+    {% endfor %}
+  </ol>
+</details>
+{% endmacro %}
+
+<div class="space-y-6">
+
+  {# ── QuickBooks ── #}
+  <div id="quickbooks" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-green-100 rounded-xl flex items-center justify-center text-lg">🟢</div>
+        <div>
+          <h2 class="font-semibold text-slate-800">QuickBooks</h2>
+          <p class="text-xs text-slate-500">Sandbox / Production credentials</p>
+        </div>
+      </div>
+      {% if qb_connected %}
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">
+        <span class="w-2 h-2 bg-green-500 rounded-full"></span> Connected
+      </span>
+      {% else %}
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-500">
+        <span class="w-2 h-2 bg-red-400 rounded-full"></span> Not connected
+      </span>
+      {% endif %}
+    </div>
+    <form id="qb-form" hx-post="/api/config/quickbooks" hx-target="#toast" hx-swap="innerHTML">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        {{ text_field('client_id', 'Client ID', cfg.get('qb_client_id','')) }}
+        {{ pwd_field('client_secret', 'Client Secret', cfg.get('qb_client_secret','')) }}
+        {{ text_field('realm_id', 'Realm ID', cfg.get('qb_realm_id','')) }}
+      </div>
+      <p class="text-xs text-slate-400 mb-4">
+        Paste your Client ID, Client Secret, and Realm ID, then click <span class="font-medium text-slate-500">Connect QuickBooks</span> —
+        the access and refresh tokens are generated and saved automatically, and refreshed on their own from then on. You only need to do this once.
+      </p>
+      <div class="flex items-center gap-3 pt-1">
+        <button type="submit"
+          class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+          Save Settings
+        </button>
+        <button type="button" id="qb-connect-btn" onclick="connectQuickBooks(this)"
+          class="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors">
+          {% if qb_connected %}Reconnect QuickBooks{% else %}Connect QuickBooks{% endif %}
+        </button>
+      </div>
+    </form>
+    <script>
+      async function connectQuickBooks(btn) {
+        const form = document.getElementById('qb-form');
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Connecting…';
+        try {
+          await fetch(form.getAttribute('hx-post'), { method: 'POST', body: new FormData(form) });
+        } catch (e) {}
+        window.location.href = '/api/config/quickbooks/connect';
+      }
+    </script>
+    {{ howto('How to connect your QuickBooks account', [
+      'Go to <span class="font-medium text-slate-600">developer.intuit.com</span> and sign in with your Intuit account.',
+      'Create an app (or open an existing one) under <span class="font-medium text-slate-600">My Apps</span>, and make sure it\'s set up for the <span class="font-medium text-slate-600">Accounting</span> API.',
+      'Open the <span class="font-medium text-slate-600">Keys &amp; OAuth</span> tab and copy the <span class="font-medium text-slate-600">Client ID</span> and <span class="font-medium text-slate-600">Client Secret</span>.',
+      'On that same tab, under <span class="font-medium text-slate-600">Redirect URIs</span>, add this dashboard\'s callback address: <span class="font-medium text-slate-600">https://your-dashboard-domain/api/config/quickbooks/callback</span> (replace with your actual dashboard URL) and save.',
+      'In QuickBooks, go to <span class="font-medium text-slate-600">Settings → Account and Settings → Advanced</span> to find your <span class="font-medium text-slate-600">Realm ID</span> (also called Company ID).',
+      'Paste the Client ID, Client Secret, and Realm ID into the fields above, click <span class="font-medium text-slate-600">Save Settings</span>, then click <span class="font-medium text-slate-600">Connect QuickBooks</span> and follow the prompts to log in and authorize access.',
+      'That\'s it — you only need to do this once. The dashboard securely stores and automatically refreshes your connection from then on.',
+    ]) }}
+  </div>
+
+  {# ── PM List ── #}
+  <div id="pm-list" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center text-lg">👥</div>
+        <div>
+          <h2 class="font-semibold text-slate-800">PM List</h2>
+          <p class="text-xs text-slate-500">Project managers and Slack IDs</p>
+        </div>
+      </div>
+      <button onclick="showAddRow('pm')"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Add PM
+      </button>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">
+            <th class="px-4 py-2.5 rounded-l-lg">Name</th>
+            <th class="px-4 py-2.5">Email</th>
+            <th class="px-4 py-2.5">Slack User ID</th>
+            <th class="px-4 py-2.5 rounded-r-lg"></th>
+          </tr>
+        </thead>
+        <tbody id="pm-tbody" class="divide-y divide-slate-100">
+          {% for pm in pms %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 font-medium text-slate-800">{{ pm.full_name }}</td>
+            <td class="px-4 py-3 text-slate-600">{{ pm.email }}</td>
+            <td class="px-4 py-3 text-slate-500 font-mono text-xs">{{ pm.slack_user_id }}</td>
+            <td class="px-4 py-3 text-right">
+              <button hx-delete="/api/config/pm/{{ pm.id }}" hx-target="#pm-tbody" hx-swap="innerHTML"
+                hx-confirm="Delete {{ pm.full_name }}?"
+                class="text-slate-400 hover:text-red-500 transition-colors text-xs">Delete</button>
+            </td>
+          </tr>
+          {% endfor %}
+          <tr id="pm-add-row" class="hidden bg-blue-50">
+            <td class="px-4 py-2">
+              <input form="pm-add-form" name="full_name" type="text" placeholder="Full Name"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"/>
+            </td>
+            <td class="px-4 py-2">
+              <input form="pm-add-form" name="email" type="email" placeholder="email@bcs.net"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"/>
+            </td>
+            <td class="px-4 py-2">
+              <input form="pm-add-form" name="slack_user_id" type="text" placeholder="U0XXXXXXX"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"/>
+            </td>
+            <td class="px-4 py-2 text-right whitespace-nowrap">
+              <button type="submit" form="pm-add-form"
+                class="px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md mr-1">Add</button>
+              <button type="button" onclick="hideAddRow('pm')"
+                class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-md">Cancel</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <form id="pm-add-form" hx-post="/api/config/pm/add" hx-target="#pm-tbody" hx-swap="innerHTML"
+        hx-on::after-request="hideAddRow('pm')"></form>
+    </div>
+  </div>
+
+  {# ── Sales Rep List ── #}
+  <div id="sales-reps" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-purple-100 rounded-xl flex items-center justify-center text-lg">💼</div>
+        <div>
+          <h2 class="font-semibold text-slate-800">Sales Rep List</h2>
+          <p class="text-xs text-slate-500">Sales reps and HubSpot Owner IDs</p>
+        </div>
+      </div>
+      <button onclick="showAddRow('sr')"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Add Rep
+      </button>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">
+            <th class="px-4 py-2.5 rounded-l-lg">Name</th>
+            <th class="px-4 py-2.5">Email</th>
+            <th class="px-4 py-2.5">HubSpot Owner ID</th>
+            <th class="px-4 py-2.5 rounded-r-lg"></th>
+          </tr>
+        </thead>
+        <tbody id="sr-tbody" class="divide-y divide-slate-100">
+          {% for rep in sales_reps %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-4 py-3 font-medium text-slate-800">{{ rep.name }}</td>
+            <td class="px-4 py-3 text-slate-600">{{ rep.email }}</td>
+            <td class="px-4 py-3 text-slate-500 font-mono text-xs">{{ rep.hubspot_owner_id }}</td>
+            <td class="px-4 py-3 text-right">
+              <button hx-delete="/api/config/salesrep/{{ rep.id }}" hx-target="#sr-tbody" hx-swap="innerHTML"
+                hx-confirm="Delete {{ rep.name }}?"
+                class="text-slate-400 hover:text-red-500 transition-colors text-xs">Delete</button>
+            </td>
+          </tr>
+          {% endfor %}
+          <tr id="sr-add-row" class="hidden bg-purple-50">
+            <td class="px-4 py-2">
+              <input form="sr-add-form" name="name" type="text" placeholder="Full Name"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500"/>
+            </td>
+            <td class="px-4 py-2">
+              <input form="sr-add-form" name="email" type="email" placeholder="email@bcs.net"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500"/>
+            </td>
+            <td class="px-4 py-2">
+              <input form="sr-add-form" name="hubspot_owner_id" type="text" placeholder="owner_xxx"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"/>
+            </td>
+            <td class="px-4 py-2 text-right whitespace-nowrap">
+              <button type="submit" form="sr-add-form"
+                class="px-2.5 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md mr-1">Add</button>
+              <button type="button" onclick="hideAddRow('sr')"
+                class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-md">Cancel</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <form id="sr-add-form" hx-post="/api/config/salesrep/add" hx-target="#sr-tbody" hx-swap="innerHTML"
+        hx-on::after-request="hideAddRow('sr')"></form>
+    </div>
+  </div>
+
+  {# ── Google Sheets ── #}
+  <div id="google-sheets" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center gap-3 mb-5">
+      <div class="w-9 h-9 bg-emerald-100 rounded-xl flex items-center justify-center text-lg">📊</div>
+      <div>
+        <h2 class="font-semibold text-slate-800">Google Sheets</h2>
+        <p class="text-xs text-slate-500">Spreadsheet ID for job data sync</p>
+      </div>
+    </div>
+    <form hx-post="/api/config/sheets" hx-target="#toast" hx-swap="innerHTML">
+      <div class="mb-4">
+        {{ text_field('sheets_id', 'Google Sheets ID', cfg.get('google_sheets_id',''), '19hgRkkhn7B9F-LdUIy0pW_zXL4HXnEXeC7rSY8JDLTc') }}
+        <p class="text-xs text-slate-400 mt-1.5">Found in the sheet URL: docs.google.com/spreadsheets/d/<span class="font-medium text-slate-500">SHEET_ID</span>/edit</p>
+      </div>
+      <button type="submit"
+        class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+        Save Settings
+      </button>
+    </form>
+    {{ howto('How to connect your Google Sheet', [
+      'Open the Google Sheet that contains your job data.',
+      'Copy the <span class="font-medium text-slate-600">Sheet ID</span> from the browser address bar — it\'s the long string of letters and numbers between <span class="font-medium text-slate-600">/d/</span> and <span class="font-medium text-slate-600">/edit</span> in the URL.',
+      'Make sure the sheet is shared with the service account / email provided by your developer (so the dashboard is allowed to read it).',
+      'Paste the Sheet ID into the field above and click <span class="font-medium text-slate-600">Save Settings</span>.',
+    ]) }}
+  </div>
+
+  {# ── HubSpot Config ── #}
+  <div id="hubspot" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center text-lg">🧡</div>
+        <div>
+          <h2 class="font-semibold text-slate-800">HubSpot Config</h2>
+          <p class="text-xs text-slate-500">API token and pipeline settings</p>
+        </div>
+      </div>
+      {% if hs_connected %}
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">
+        <span class="w-2 h-2 bg-green-500 rounded-full"></span> Connected
+      </span>
+      {% else %}
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-500">
+        <span class="w-2 h-2 bg-red-400 rounded-full"></span> Not connected
+      </span>
+      {% endif %}
+    </div>
+    <form hx-post="/api/config/hubspot" hx-target="#toast" hx-swap="innerHTML">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        {{ pwd_field('access_token', 'Access Token', cfg.get('hubspot_access_token','')) }}
+        {{ text_field('pipeline_id', 'Pipeline ID', cfg.get('hubspot_pipeline_id','default')) }}
+        {{ text_field('portal_id', 'Portal ID', cfg.get('hubspot_portal_id','51566851')) }}
+      </div>
+      <div class="flex items-center gap-3 pt-1">
+        <button type="submit"
+          class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+          Save Settings
+        </button>
+        <button type="button"
+          hx-post="/api/config/hubspot/test" hx-target="#toast" hx-swap="innerHTML"
+          class="px-4 py-2 text-sm font-medium text-orange-700 bg-orange-100 hover:bg-orange-200 rounded-lg transition-colors">
+          Test Connection
+        </button>
+      </div>
+    </form>
+    {{ howto('How to connect your HubSpot account', [
+      'Log in to HubSpot and go to <span class="font-medium text-slate-600">Settings → Integrations → Private Apps</span>.',
+      'Click <span class="font-medium text-slate-600">Create a private app</span>, give it a name, and under the <span class="font-medium text-slate-600">Scopes</span> tab enable read/write access for <span class="font-medium text-slate-600">Deals</span> and <span class="font-medium text-slate-600">CRM</span>.',
+      'Click <span class="font-medium text-slate-600">Create app</span>, then copy the generated <span class="font-medium text-slate-600">Access Token</span>.',
+      'To find your <span class="font-medium text-slate-600">Pipeline ID</span>, go to <span class="font-medium text-slate-600">Settings → Objects → Deals → Pipelines</span> and select the pipeline you want to sync (use <span class="font-medium text-slate-600">default</span> if you only have one).',
+      'Paste both values into the fields above, click <span class="font-medium text-slate-600">Save Settings</span>, then click <span class="font-medium text-slate-600">Test Connection</span> to confirm it works.',
+    ]) }}
+  </div>
+
+  {# ── HubSpot Custom Field Names ── #}
+  <div id="hubspot-fields" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center gap-3 mb-5">
+      <div class="w-9 h-9 bg-orange-50 rounded-xl flex items-center justify-center text-lg">🔧</div>
+      <div>
+        <h2 class="font-semibold text-slate-800">HubSpot Custom Field Names</h2>
+        <p class="text-xs text-slate-500">Internal property names for 6 custom deal fields synced by OCA</p>
+      </div>
+    </div>
+    <form hx-post="/api/config/hubspot/fields" hx-target="#toast" hx-swap="innerHTML">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        {{ text_field('hubspot_field_pm_name',           'PM Name',                    cfg.get('hubspot_field_pm_name',''),           'pm_name') }}
+        {{ text_field('hubspot_field_crew_confirmed',    'Crew Confirmed',             cfg.get('hubspot_field_crew_confirmed',''),    'crew_confirmed') }}
+        {{ text_field('hubspot_field_last_update_sent',  'Last Customer Update Sent',  cfg.get('hubspot_field_last_update_sent',''),  'last_customer_update_sent') }}
+        {{ text_field('hubspot_field_next_update',       'Next Scheduled Update',      cfg.get('hubspot_field_next_update',''),       'next_scheduled_update') }}
+        {{ text_field('hubspot_field_escalation_flag',   'Escalation Flag',            cfg.get('hubspot_field_escalation_flag',''),   'escalation_flag') }}
+        {{ text_field('hubspot_field_escalation_reason', 'Escalation Reason',          cfg.get('hubspot_field_escalation_reason',''), 'escalation_reason') }}
+      </div>
+      <p class="text-xs text-slate-400 mb-4">
+        Enter the <span class="font-medium text-slate-500">internal name</span> (not the display label) of each custom deal property in HubSpot.
+        Casey and OCA write these values back to the deal automatically.
+        Defaults are pre-filled — only change if your HubSpot property names differ.
+      </p>
+      <button type="submit"
+        class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+        Save Field Names
+      </button>
+    </form>
+    {{ howto('How to find HubSpot custom property internal names', [
+      'In HubSpot, go to <span class="font-medium text-slate-600">Settings → Objects → Deals → Properties</span>.',
+      'Click on any custom property you created for deal data (e.g. "Client Mood").',
+      'Under the property details, look for <span class="font-medium text-slate-600">Internal name</span> — it looks like <span class="font-medium text-slate-600">client_mood</span> or <span class="font-medium text-slate-600">client_mood__c</span>.',
+      'Copy that internal name (exactly as shown, including any <span class="font-medium text-slate-600">__c</span> suffix if present) and paste it into the corresponding field above.',
+      'Repeat for all 6 fields, then click <span class="font-medium text-slate-600">Save Field Names</span>.',
+    ]) }}
+  </div>
+
+  {# ── Slack Bot Token ── #}
+  <div id="slack" class="bg-white rounded-xl shadow-sm p-6">
+    <div class="flex items-center gap-3 mb-5">
+      <div class="w-9 h-9 bg-violet-100 rounded-xl flex items-center justify-center text-lg">💬</div>
+      <div>
+        <h2 class="font-semibold text-slate-800">Slack Bot Token</h2>
+        <p class="text-xs text-slate-500">Bot credentials and channel IDs</p>
+      </div>
+    </div>
+    <form hx-post="/api/config/slack" hx-target="#toast" hx-swap="innerHTML">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        {{ pwd_field('bot_token', 'Bot Token', cfg.get('slack_bot_token','')) }}
+        {{ text_field('josh_id', 'Josh Slack User ID', cfg.get('slack_josh_user_id',''), 'U0XXXXXXXXX') }}
+        {{ text_field('sam_id', 'Sam Slack User ID', cfg.get('slack_sam_user_id',''), 'U0XXXXXXXXX') }}
+        {{ text_field('oca_channel', 'OCA Alerts Channel', cfg.get('slack_oca_channel',''), 'oca-alerts') }}
+        {{ text_field('daily_channel', 'Casey Daily Channel', cfg.get('slack_casey_channel',''), 'casey-daily') }}
+      </div>
+      <button type="submit"
+        class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+        Save Settings
+      </button>
+    </form>
+    {{ howto('How to connect your Slack workspace', [
+      'Go to <span class="font-medium text-slate-600">api.slack.com/apps</span> and click <span class="font-medium text-slate-600">Create New App</span> (choose "From scratch") for your workspace.',
+      'Under <span class="font-medium text-slate-600">OAuth &amp; Permissions</span>, add the <span class="font-medium text-slate-600">chat:write</span> and <span class="font-medium text-slate-600">users:read</span> bot scopes, then click <span class="font-medium text-slate-600">Install to Workspace</span>.',
+      'Copy the <span class="font-medium text-slate-600">Bot User OAuth Token</span> (starts with <span class="font-medium text-slate-600">xoxb-</span>) and paste it into the Bot Token field above.',
+      'To get a person\'s Slack User ID: click their name/profile in Slack → <span class="font-medium text-slate-600">More → Copy member ID</span>.',
+      'To get a channel\'s name: open the channel in Slack and use the name shown at the top (without the #) — make sure the bot is invited to that channel.',
+      'Fill in the fields above and click <span class="font-medium text-slate-600">Save Settings</span>.',
+    ]) }}
+  </div>
+
+</div>
+{% endblock %}

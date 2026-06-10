@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}BCS Agents{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { sidebar: '#1e293b' }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="h-full bg-slate-100 flex overflow-hidden">
+
+  <!-- Mobile overlay -->
+  <div id="overlay" onclick="closeSidebar()"
+    class="fixed inset-0 bg-black bg-opacity-50 z-20 hidden lg:hidden"></div>
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar"
+    class="fixed inset-y-0 left-0 z-30 w-64 bg-slate-800 flex flex-col transform -translate-x-full transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:z-auto">
+
+    <!-- Logo -->
+    <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-700">
+      <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">B</div>
+      <div>
+        <div class="text-white font-semibold text-sm leading-tight">BCS Agents</div>
+        <div class="text-slate-400 text-xs">Admin Dashboard</div>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 px-3 py-4 overflow-y-auto space-y-1">
+
+      <!-- Dashboard -->
+      <a href="/"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+          {% if page == 'dashboard' %}bg-blue-600 text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        Dashboard
+      </a>
+
+      <!-- Jobs section -->
+      <div>
+        <button onclick="toggleSection('jobs-sub')"
+          class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+            {% if page in ['to-start','in-process'] %}text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+          <span class="flex items-center gap-3">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+            </svg>
+            Jobs
+          </span>
+          <svg id="jobs-sub-arrow" class="w-3.5 h-3.5 transition-transform {% if page in ['to-start','in-process'] %}rotate-180{% endif %}"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div id="jobs-sub" class="{% if page not in ['to-start','in-process'] %}hidden{% endif %} mt-1 space-y-0.5">
+          <a href="/jobs/to-start"
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm transition-colors
+              {% if page == 'to-start' %}bg-slate-700 text-white{% else %}text-slate-400 hover:bg-slate-700 hover:text-white{% endif %}">
+            To Start
+          </a>
+          <a href="/jobs/in-process"
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm transition-colors
+              {% if page == 'in-process' %}bg-slate-700 text-white{% else %}text-slate-400 hover:bg-slate-700 hover:text-white{% endif %}">
+            In Process
+          </a>
+        </div>
+      </div>
+
+      <!-- Configurations section -->
+      <div>
+        <button onclick="toggleSection('config-sub')"
+          class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+            {% if page == 'config' %}text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+          <span class="flex items-center gap-3">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            Configurations
+          </span>
+          <svg id="config-sub-arrow" class="w-3.5 h-3.5 transition-transform {% if page == 'config' %}rotate-180{% endif %}"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div id="config-sub" class="{% if page != 'config' %}hidden{% endif %} mt-1 space-y-0.5">
+          {% for item in [('QuickBooks', '#quickbooks'), ('PM List', '#pm-list'), ('Sales Rep List', '#sales-reps'), ('Google Sheets', '#google-sheets'), ('HubSpot Config', '#hubspot'), ('HS Custom Fields', '#hubspot-fields'), ('Slack Bot Token', '#slack')] %}
+          <a href="/config{{ item[1] }}"
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm text-slate-400 hover:bg-slate-700 hover:text-white transition-colors">
+            {{ item[0] }}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+
+    </nav>
+
+    <!-- Footer -->
+    <div class="px-4 py-3 border-t border-slate-700">
+      <div class="text-xs text-slate-500">Blue Collar Scholars</div>
+    </div>
+  </aside>
+
+  <!-- ── Main content ── -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Topbar -->
+    <header class="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center gap-4 flex-shrink-0">
+      <button onclick="openSidebar()" class="lg:hidden text-slate-500 hover:text-slate-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+      <h1 class="text-slate-800 font-semibold text-base">{% block heading %}BCS Agents{% endblock %}</h1>
+      <div class="ml-auto flex items-center gap-2">
+        <span class="inline-flex items-center gap-1.5 text-xs text-green-600 font-medium">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"></span>
+          Live
+        </span>
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <!-- Toast notification (fixed, bottom-right) -->
+  <div id="toast"
+    class="fixed bottom-5 right-5 z-50 bg-white border border-slate-200 shadow-lg rounded-xl px-5 py-3 text-sm min-w-[200px] transition-opacity duration-300">
+  </div>
+
+  <script>
+    // ── Sidebar toggle (mobile) ──
+    function openSidebar() {
+      document.getElementById('sidebar').classList.remove('-translate-x-full');
+      document.getElementById('overlay').classList.remove('hidden');
+    }
+    function closeSidebar() {
+      document.getElementById('sidebar').classList.add('-translate-x-full');
+      document.getElementById('overlay').classList.add('hidden');
+    }
+
+    // ── Nav section expand/collapse ──
+    function toggleSection(id) {
+      const sub = document.getElementById(id);
+      const arrow = document.getElementById(id + '-arrow');
+      sub.classList.toggle('hidden');
+      if (arrow) arrow.classList.toggle('rotate-180');
+    }
+
+    // ── Password visibility toggle ──
+    function togglePwd(inputId, btn) {
+      const input = document.getElementById(inputId);
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>`;
+      } else {
+        input.type = 'password';
+        btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>`;
+      }
+    }
+
+    // ── HTMX toast auto-clear ──
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+      if (e.detail.target.id === 'toast') {
+        const t = e.detail.target;
+        t.style.opacity = '1';
+        setTimeout(() => {
+          t.style.opacity = '0';
+          setTimeout(() => { t.innerHTML = ''; t.style.opacity = '1'; }, 300);
+        }, 3000);
+      }
+    });
+
+    // ── Inline PM/Sales rep add row toggle ──
+    function showAddRow(tableId) {
+      document.getElementById(tableId + '-add-row').classList.remove('hidden');
+    }
+    function hideAddRow(tableId) {
+      document.getElementById(tableId + '-add-row').classList.add('hidden');
+    }
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bcs_agents}
+      POSTGRES_USER: ${POSTGRES_USER:-bcs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bcs_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bcs_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bcs_user} -d ${POSTGRES_DB:-bcs_agents}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  casey:
+    build: .
+    command: python -m agents.casey.main
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bcs_network
+
+  oca:
+    build: .
+    command: python -m agents.oca.main
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bcs_network
+
+  dashboard:
+    build: .
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+    depends_on:
+      - postgres
+    networks:
+      - bcs_network
+    command: uvicorn dashboard.main:app --host 0.0.0.0 --port 8080 --reload
+
+  qb-setup:
+    build: .
+    env_file: .env
+    network_mode: host
+    volumes:
+      - .:/app
+    command: python scripts/qb_setup.py
+
+volumes:
+  postgres_data:
+
+networks:
+  bcs_network:
+    driver: bridge

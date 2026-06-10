@@ -1,0 +1,13 @@
+.env
+secrets/
+service_account.json
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.log
+.DS_Store
