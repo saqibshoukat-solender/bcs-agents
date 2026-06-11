@@ -1,3 +1,5 @@
+import json
+import os
 import secrets
 from pathlib import Path
 from urllib.parse import quote
@@ -14,6 +16,18 @@ from db.state_store import (
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+def _google_service_account_email() -> str:
+    """Read the client_email out of the configured Google service account JSON, if available."""
+    raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw) if raw.startswith("{") else json.load(open(raw))
+        return data.get("client_email", "")
+    except Exception:
+        return ""
 
 
 def _toast(msg: str, success: bool = True) -> str:
@@ -100,6 +114,8 @@ async def config_page(request: Request):
         "sales_reps": reps,
         "qb_connected": qb_connected,
         "hs_connected": hs_connected,
+        "qb_redirect_uri": str(request.url_for("quickbooks_oauth_callback")),
+        "google_sa_email": _google_service_account_email(),
         "cfg": db,   # all DB values — templates use cfg.key
     })
 

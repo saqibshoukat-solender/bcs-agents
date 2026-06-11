@@ -108,7 +108,7 @@
       'Go to <span class="font-medium text-slate-600">developer.intuit.com</span> and sign in with your Intuit account.',
       'Create an app (or open an existing one) under <span class="font-medium text-slate-600">My Apps</span>, and make sure it\'s set up for the <span class="font-medium text-slate-600">Accounting</span> API.',
       'Open the <span class="font-medium text-slate-600">Keys &amp; OAuth</span> tab and copy the <span class="font-medium text-slate-600">Client ID</span> and <span class="font-medium text-slate-600">Client Secret</span>.',
-      'On that same tab, under <span class="font-medium text-slate-600">Redirect URIs</span>, add this dashboard\'s callback address: <span class="font-medium text-slate-600">https://your-dashboard-domain/api/config/quickbooks/callback</span> (replace with your actual dashboard URL) and save.',
+      'On that same tab, under <span class="font-medium text-slate-600">Redirect URIs</span>, add this exact callback URL and save: <span class="font-medium text-slate-600 font-mono break-all">' ~ qb_redirect_uri ~ '</span>',
       'In QuickBooks, go to <span class="font-medium text-slate-600">Settings → Account and Settings → Advanced</span> to find your <span class="font-medium text-slate-600">Realm ID</span> (also called Company ID).',
       'Paste the Client ID, Client Secret, and Realm ID into the fields above, click <span class="font-medium text-slate-600">Save Settings</span>, then click <span class="font-medium text-slate-600">Connect QuickBooks</span> and follow the prompts to log in and authorize access.',
       'That\'s it — you only need to do this once. The dashboard securely stores and automatically refreshes your connection from then on.',
@@ -260,6 +260,12 @@
         <p class="text-xs text-slate-500">Spreadsheet ID for job data sync</p>
       </div>
     </div>
+    {% if google_sa_email %}
+    <div class="mb-4 px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-lg text-xs text-emerald-800">
+      <span class="font-medium">Share your sheet with this email (Viewer access):</span>
+      <span class="font-mono">{{ google_sa_email }}</span>
+    </div>
+    {% endif %}
     <form hx-post="/api/config/sheets" hx-target="#toast" hx-swap="innerHTML">
       <div class="mb-4">
         {{ text_field('sheets_id', 'Google Sheets ID', cfg.get('google_sheets_id',''), '19hgRkkhn7B9F-LdUIy0pW_zXL4HXnEXeC7rSY8JDLTc') }}
@@ -272,8 +278,8 @@
     </form>
     {{ howto('How to connect your Google Sheet', [
       'Open the Google Sheet that contains your job data.',
+      'Click <span class="font-medium text-slate-600">Share</span> and add <span class="font-medium text-slate-600 font-mono">' ~ (google_sa_email if google_sa_email else 'the service account email provided by your developer') ~ '</span> as a <span class="font-medium text-slate-600">Viewer</span> (read-only access is enough).',
       'Copy the <span class="font-medium text-slate-600">Sheet ID</span> from the browser address bar — it\'s the long string of letters and numbers between <span class="font-medium text-slate-600">/d/</span> and <span class="font-medium text-slate-600">/edit</span> in the URL.',
-      'Make sure the sheet is shared with the service account / email provided by your developer (so the dashboard is allowed to read it).',
       'Paste the Sheet ID into the field above and click <span class="font-medium text-slate-600">Save Settings</span>.',
     ]) }}
   </div>
@@ -321,7 +327,8 @@
       'Click <span class="font-medium text-slate-600">Create a private app</span>, give it a name, and under the <span class="font-medium text-slate-600">Scopes</span> tab enable read/write access for <span class="font-medium text-slate-600">Deals</span> and <span class="font-medium text-slate-600">CRM</span>.',
       'Click <span class="font-medium text-slate-600">Create app</span>, then copy the generated <span class="font-medium text-slate-600">Access Token</span>.',
       'To find your <span class="font-medium text-slate-600">Pipeline ID</span>, go to <span class="font-medium text-slate-600">Settings → Objects → Deals → Pipelines</span> and select the pipeline you want to sync (use <span class="font-medium text-slate-600">default</span> if you only have one).',
-      'Paste both values into the fields above, click <span class="font-medium text-slate-600">Save Settings</span>, then click <span class="font-medium text-slate-600">Test Connection</span> to confirm it works.',
+      'To find your <span class="font-medium text-slate-600">Portal ID</span> (Account ID), look at any HubSpot URL while logged in — it\'s the number right after <span class="font-medium text-slate-600">/contacts/</span> (e.g. app.hubspot.com/contacts/<span class="font-medium text-slate-600">12345678</span>/...). It\'s used to build direct links to deals in Slack alerts.',
+      'Paste these values into the fields above, click <span class="font-medium text-slate-600">Save Settings</span>, then click <span class="font-medium text-slate-600">Test Connection</span> to confirm it works.',
     ]) }}
   </div>
 
@@ -353,12 +360,20 @@
         Save Field Names
       </button>
     </form>
-    {{ howto('How to find HubSpot custom property internal names', [
-      'In HubSpot, go to <span class="font-medium text-slate-600">Settings → Objects → Deals → Properties</span>.',
-      'Click on any custom property you created for deal data (e.g. "Client Mood").',
-      'Under the property details, look for <span class="font-medium text-slate-600">Internal name</span> — it looks like <span class="font-medium text-slate-600">client_mood</span> or <span class="font-medium text-slate-600">client_mood__c</span>.',
-      'Copy that internal name (exactly as shown, including any <span class="font-medium text-slate-600">__c</span> suffix if present) and paste it into the corresponding field above.',
-      'Repeat for all 6 fields, then click <span class="font-medium text-slate-600">Save Field Names</span>.',
+    {{ howto('How to set up these 6 custom properties in HubSpot', [
+      'Casey and OCA write status updates back to 6 custom properties on each HubSpot Deal. If your account doesn\'t have them yet, go to <span class="font-medium text-slate-600">Settings → Objects → Deals → Properties → Create property</span> and create each one with the type shown below (any property group is fine):'
+        ~ '<ul class="mt-1.5 ml-4 list-disc space-y-1">'
+        ~ '<li><span class="font-medium text-slate-600">PM Name</span> — Single-line text</li>'
+        ~ '<li><span class="font-medium text-slate-600">Crew Confirmed</span> — Single checkbox (Yes/No)</li>'
+        ~ '<li><span class="font-medium text-slate-600">Last Customer Update Sent</span> — Date picker</li>'
+        ~ '<li><span class="font-medium text-slate-600">Next Scheduled Update</span> — Date picker</li>'
+        ~ '<li><span class="font-medium text-slate-600">Escalation Flag</span> — Single checkbox (Yes/No)</li>'
+        ~ '<li><span class="font-medium text-slate-600">Escalation Reason</span> — Single-line text</li>'
+        ~ '</ul>',
+      'If these properties already exist on your Deals (set up previously), skip straight to the next step.',
+      'For each property, open it under <span class="font-medium text-slate-600">Settings → Objects → Deals → Properties</span> and look for its <span class="font-medium text-slate-600">Internal name</span> — e.g. the "PM Name" property\'s internal name might be <span class="font-medium text-slate-600">pm_name</span> or <span class="font-medium text-slate-600">pm_name__c</span>.',
+      'Copy each internal name exactly as shown and paste it into the matching field above. The defaults shown are pre-filled assuming you created the properties with those exact internal names — only change them if yours differ.',
+      'Click <span class="font-medium text-slate-600">Save Field Names</span> when done.',
     ]) }}
   </div>
 
