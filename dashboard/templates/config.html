@@ -33,18 +33,6 @@
 </div>
 {% endmacro %}
 
-{% macro select_field(fname, label, options, val='') %}
-<div>
-  <label class="block text-xs font-medium text-slate-600 mb-1">{{ label }}</label>
-  <select name="{{ fname }}"
-    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-    {% for opt_val, opt_label in options %}
-    <option value="{{ opt_val }}" {% if opt_val == val %}selected{% endif %}>{{ opt_label }}</option>
-    {% endfor %}
-  </select>
-</div>
-{% endmacro %}
-
 {% macro howto(title, steps) %}
 <details class="mt-4 group">
   <summary class="cursor-pointer list-none flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
@@ -317,15 +305,7 @@
         {{ pwd_field('access_token', 'Access Token', cfg.get('hubspot_access_token','')) }}
         {{ text_field('pipeline_id', 'Pipeline ID', cfg.get('hubspot_pipeline_id','default')) }}
         {{ text_field('portal_id', 'Portal ID', cfg.get('hubspot_portal_id','51566851')) }}
-        {{ select_field('sync_mode', 'Deal Sync Mode', [
-          ('create_if_missing', 'Create if missing'),
-          ('link_only', 'Link only (never create)'),
-        ], cfg.get('hubspot_sync_mode','create_if_missing')) }}
       </div>
-      <p class="text-xs text-slate-400 mb-4">
-        <span class="font-medium text-slate-500">Create if missing</span> — OCA creates a new HubSpot deal when no matching deal is found for a job.
-        <span class="font-medium text-slate-500">Link only</span> — OCA never creates deals; unmatched jobs are shown with a yellow warning on the Jobs pages.
-      </p>
       <div class="flex items-center gap-3 pt-1">
         <button type="submit"
           class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
@@ -361,8 +341,8 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         {{ text_field('hubspot_field_pm_name',           'PM Name',                    cfg.get('hubspot_field_pm_name',''),           'pm_name') }}
         {{ text_field('hubspot_field_crew_confirmed',    'Crew Confirmed',             cfg.get('hubspot_field_crew_confirmed',''),    'crew_confirmed') }}
-        {{ text_field('hubspot_field_last_update_sent',  'Last Customer Update Sent',  cfg.get('hubspot_field_last_update_sent',''),  'last_customer_update_sent') }}
-        {{ text_field('hubspot_field_next_update',       'Next Scheduled Update',      cfg.get('hubspot_field_next_update',''),       'next_scheduled_update') }}
+        {{ text_field('hubspot_field_last_update_sent',  'Casey Last Customer Update Sent',  cfg.get('hubspot_field_last_update_sent',''),  'last_customer_update_sent') }}
+        {{ text_field('hubspot_field_next_update',       'Casey Next Scheduled Update',      cfg.get('hubspot_field_next_update',''),       'next_scheduled_update') }}
         {{ text_field('hubspot_field_escalation_flag',   'Escalation Flag',            cfg.get('hubspot_field_escalation_flag',''),   'escalation_flag') }}
         {{ text_field('hubspot_field_escalation_reason', 'Escalation Reason',          cfg.get('hubspot_field_escalation_reason',''), 'escalation_reason') }}
       </div>

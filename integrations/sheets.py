@@ -172,7 +172,11 @@ def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
         "start_date":            row.get("Start Date", "").strip(),
         "estimated_start_window": row.get("Realistic Start Date", "").strip(),
         "deposit_date":          row.get("Deposit Date", "").strip(),
-        "most_recent_contact":   row.get("Most Recent communication", "").strip(),
+        # Raw "Most Recent communication" sheet column — used only as a fallback
+        # when no Gmail-based contact history exists (see _build_contact_date_map).
+        "sheet_last_contact":    row.get("Most Recent communication", "").strip(),
+        # Retained for casey_active_jobs storage / dashboard display only — no
+        # longer used as the primary staleness signal in agent logic.
         "last_pm_contact":       (
             parse_latest_date(row.get("Most Recent communication", ""))
             or parse_latest_date(row.get("PM Communication history", ""))
@@ -180,7 +184,7 @@ def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
         "pm_communication_history": row.get("PM Communication history", "").strip(),
         "assigned_crew_sub":     row.get("Contractor", "").strip(),
         "customer_phone":        row.get("Phone number", "").strip(),
-        "deadline":              row.get("Dead line to start", "").strip(),
+        "deadline_to_start":     row.get("Dead line to start", "").strip(),
         "overdue":               row.get("Overdue ", "").strip(),
         "projected_end_date":    row.get("Projected End Date", "").strip(),
         "end_date":              row.get("End Date", "").strip(),

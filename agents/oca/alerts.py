@@ -14,6 +14,7 @@ _FLAG_TYPE_LABELS = {
     "unconfirmed_crew": "Unconfirmed Crew/Sub",
     "dropped_invoice":  "Dropped Invoice Follow-up",
     "readiness_sync":   "HubSpot Sync Issue",
+    "deal_not_found":   "Deal Not Found in HubSpot",
 }
 
 _URGENCY_EMOJI = {
@@ -45,18 +46,20 @@ def _hubspot_deal_url(deal_id: str) -> str:
 def build_alert_message(flag: dict[str, Any]) -> str:
     flag_type = flag.get("flag_type", "")
     label = _FLAG_TYPE_LABELS.get(flag_type, flag_type)
-    urgency = flag.get("urgency", "info")
-    emoji = _URGENCY_EMOJI.get(urgency, "🔵")
-    message = (
-        f"🚨 *OCA Alert — {label}*\n"
-        f"Customer: {flag.get('client_name', 'Unknown')}\n"
-        f"PM: {flag.get('pm_name', 'Unassigned')}\n"
-        f"Details: {flag.get('details', '')}\n"
-        f"Urgency: {emoji} {urgency}"
-    )
-    if urgency == "urgent" and flag.get("hubspot_deal_id"):
-        message += f"\n🔗 HubSpot: {_hubspot_deal_url(flag['hubspot_deal_id'])}"
-    return message
+    deal_id = flag.get("hubspot_deal_id")
+    deal_url = _hubspot_deal_url(deal_id) if deal_id else "—"
+
+    lines = [
+        f"🚨 *OCA Alert — {label}*",
+        f"Customer: {flag.get('client_name', 'Unknown')}",
+        f"PM: {flag.get('pm_name', 'Unassigned')}",
+        f"Details: {flag.get('details', '')}",
+    ]
+    last_contact = flag.get("last_contact_date")
+    if last_contact:
+        lines.append(f"Last contact: {last_contact}")
+    lines.append(f"HubSpot: {deal_url}")
+    return "\n".join(lines)
 
 
 def _dm(slack_client, user_id: str, text: str, pm_name: str = "") -> None:
@@ -191,6 +194,84 @@ def escalate_unresolved_warning(
     _dm(slack_client, josh_slack_id, message)
 
 
+def build_deal_not_found_message(flag: dict[str, Any]) -> str:
+    return (
+        f"⚠️ *Deal Not Found in HubSpot*\n"
+        f"Customer: {flag.get('client_name', 'Unknown')}\n"
+        f"PM: {flag.get('pm_name', 'Unassigned')}\n"
+        f"Reason: Job exists in sheet but no matching HubSpot deal found\n"
+        f"Sheet email: {flag.get('customer_email') or 'Unknown'}\n"
+        f"Action: Update customer email in sheet to match HubSpot contact, then re-run OCA"
+    )
+
+
+def send_deal_not_found_alert(
+    flag: dict[str, Any],
+    slack_client,
+    josh_slack_id: str,
+) -> None:
+    message = build_deal_not_found_message(flag)
+    _dm(slack_client, josh_slack_id, message)
+
+
+def build_no_email_history_message(
+    client_name: str,
+    pm_name: str,
+    pm_email: str,
+    customer_email: str,
+) -> str:
+    return (
+        f"⚠️ *No Email History Found*\n"
+        f"Customer: {client_name}\n"
+        f"PM: {pm_name}\n"
+        f"Reason: No emails found in {pm_email} sent folder to {customer_email}\n"
+        f"Action: Verify PM has contacted this customer"
+    )
+
+
+def send_no_email_history_alert(
+    client_name: str,
+    pm_name: str,
+    pm_email: str,
+    customer_email: str,
+    slack_client,
+    josh_slack_id: str,
+) -> None:
+    message = build_no_email_history_message(client_name, pm_name, pm_email, customer_email)
+    _dm(slack_client, josh_slack_id, message)
+
+
+def build_deadline_change_message(
+    client_name: str,
+    pm_name: str,
+    old_deadline: str,
+    new_deadline: str,
+    deal_id: "str | None",
+) -> str:
+    deal_url = _hubspot_deal_url(deal_id) if deal_id else "—"
+    return (
+        f"📅 *Deadline to Start Changed*\n"
+        f"Customer: {client_name}\n"
+        f"PM: {pm_name or 'Unassigned'}\n"
+        f"Previous deadline: {old_deadline}\n"
+        f"New deadline: {new_deadline}\n"
+        f"HubSpot: {deal_url}"
+    )
+
+
+def send_deadline_change_alert(
+    client_name: str,
+    pm_name: str,
+    old_deadline: str,
+    new_deadline: str,
+    deal_id: "str | None",
+    slack_client,
+    josh_slack_id: str,
+) -> None:
+    message = build_deadline_change_message(client_name, pm_name, old_deadline, new_deadline, deal_id)
+    _dm(slack_client, josh_slack_id, message)
+
+
 def send_daily_digest(
     active_flags_summary: dict[str, int],
     slack_client,
@@ -220,8 +301,7 @@ def send_daily_digest(
         message += (
             f"\nHubSpot sync: {hs_sync_summary.get('matched_contact', 0)} matched by contact, "
             f"{hs_sync_summary.get('matched_name', 0)} matched by deal name, "
-            f"{hs_sync_summary.get('created', 0)} created new, "
-            f"{hs_sync_summary.get('not_linked', 0)} not linked (link-only)"
+            f"{hs_sync_summary.get('not_found', 0)} not found (Josh notified)"
         )
     recipient = sam_slack_id
     if not recipient:

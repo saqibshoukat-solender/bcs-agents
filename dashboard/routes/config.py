@@ -250,12 +250,10 @@ async def save_hubspot(
     access_token: Optional[str] = Form(None),
     pipeline_id:  Optional[str] = Form(None),
     portal_id:    Optional[str] = Form(None),
-    sync_mode:    Optional[str] = Form(None),
 ):
     if access_token: set_config("hubspot_access_token", access_token)
     if pipeline_id:  set_config("hubspot_pipeline_id",  pipeline_id)
     if portal_id:    set_config("hubspot_portal_id",    portal_id)
-    if sync_mode:    set_config("hubspot_sync_mode",    sync_mode)
     return HTMLResponse(_toast("HubSpot settings saved"))
 
 

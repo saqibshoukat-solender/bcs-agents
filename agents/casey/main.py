@@ -24,6 +24,7 @@ from db.state_store import (
     was_escalation_sent_recently,
     record_alert_sent,
     get_config,
+    get_email_history,
 )
 from utils.logger import get_logger
 from config.loader import cfg
@@ -40,7 +41,7 @@ MOCK_JOB = {
     "start_date": "2026-04-01",
     "estimated_start_window": "2026-04-15",
     "deposit_date": "2026-03-20",
-    "most_recent_contact": "2026-03-01",
+    "sheet_last_contact": "2026-03-01",
     "last_pm_contact": None,
     "assigned_crew_sub": "Zeidy",
     "customer_phone": "555-0199",
@@ -154,6 +155,21 @@ def _idempotent_skip(job: dict) -> bool:
     return False
 
 
+def _get_contact_date(client_name: str, pm_name: str, job: dict) -> "date | None":
+    """Last PM↔customer contact date: Gmail history (cached by OCA) first, sheet fallback otherwise.
+
+    `job` here is a casey_active_jobs row dict (from get_jobs_due_for_update),
+    where the sheet's "Most Recent communication" value is stored under
+    most_recent_contact — fall back to sheet_last_contact too in case a raw
+    sheet job dict is ever passed in.
+    """
+    history = get_email_history(client_name, pm_name)
+    if history and history.last_sent_at:
+        return history.last_sent_at
+    sheet_value = job.get("most_recent_contact") or job.get("sheet_last_contact", "")
+    return parse_latest_date(sheet_value)
+
+
 def calculate_days_since(date_value) -> "int | None":
     if not date_value:
         return None
@@ -168,22 +184,18 @@ def calculate_days_since(date_value) -> "int | None":
         return None
 
 
-def build_escalation_slack_msg(job: dict, reason: str) -> str:
-    msg = (
-        f"*Escalation Required*\n"
+def build_escalation_slack_msg(job: dict, reason: str, last_contact: "date | None" = None) -> str:
+    deal_id = job.get("hubspot_deal_id")
+    portal_id = cfg("hubspot_portal_id") or "51566851"
+    deal_url = f"https://app.hubspot.com/contacts/{portal_id}/deal/{deal_id}" if deal_id else "—"
+    return (
+        f"⚠️ *Escalation Required*\n"
         f"Customer: {job['client_name']}\n"
         f"PM: {job.get('pm_name') or 'Unknown'}\n"
-        f"Job: {job.get('job_type') or 'N/A'}\n"
         f"Reason: {reason}\n"
-        f"Last contact: {job.get('most_recent_contact') or 'Unknown'}\n"
-        f"Email: {job.get('customer_email') or 'Unknown'}\n"
-        f"Phone: {job.get('customer_phone') or 'Unknown'}"
+        f"Last contact: {last_contact or 'Unknown'}\n"
+        f"HubSpot: {deal_url}"
     )
-    deal_id = job.get("hubspot_deal_id")
-    if deal_id:
-        portal_id = cfg("hubspot_portal_id") or "51566851"
-        msg += f"\n🔗 HubSpot: https://app.hubspot.com/contacts/{portal_id}/deal/{deal_id}"
-    return msg
 
 
 def _hs_field(config_key: str, fallback: str) -> str:
@@ -319,7 +331,7 @@ def _run():
             "estimated_start_window": job.get("estimated_start_window", ""),
             "assigned_crew_sub":      job.get("assigned_crew_sub", ""),
             "last_pm_contact":        job.get("last_pm_contact"),
-            "most_recent_contact":    job.get("most_recent_contact", ""),
+            "most_recent_contact":    job.get("sheet_last_contact", ""),
             "pm_communication_history": job.get("pm_communication_history", ""),
             "hubspot_deal_id":        hubspot_deal_id,
             "hubspot_owner_name":     hubspot_owner_name,
@@ -362,7 +374,8 @@ def _run():
             skipped += 1
             continue
 
-        days_since_contact = calculate_days_since(job.get("last_pm_contact"))
+        contact_date = _get_contact_date(client_name, pm_name, job)
+        days_since_contact = calculate_days_since(contact_date)
 
         # ── QB invoice status + scenario (computed before escalation checks) ──
         job["qb_invoice_status"] = get_invoice_status_for_customer(job["client_name"])
@@ -393,7 +406,7 @@ def _run():
                 skipped += 1
             else:
                 set_escalation(client_name, pm_name, escalation_reason)
-                msg = build_escalation_slack_msg(job, escalation_reason)
+                msg = build_escalation_slack_msg(job, escalation_reason, contact_date)
                 if JOSH_SLACK_USER_ID:
                     send_dm(JOSH_SLACK_USER_ID, msg)
                 record_alert_sent(job_id, "escalation", client_name)
@@ -418,6 +431,9 @@ def _run():
         owner_name = job.get("hubspot_owner_name", "")
         cc_email = _get_sales_rep_email(estimator, owner_name)
 
+        email_history = get_email_history(client_name, pm_name)
+        email_snippets = email_history.email_snippets if email_history and email_history.email_snippets else ""
+
         composed = compose_customer_update_email(
             customer_name=client_name,
             pm_name=pm_name,
@@ -433,6 +449,7 @@ def _run():
             total_project=job.get("total_project", ""),
             estimator_name=estimator,
             sheet_tab=job.get("sheet_tab", ""),
+            email_history=email_snippets,
         )
 
         subject   = composed.get("subject", "Project Update — Blue Collar Scholars")

@@ -93,6 +93,20 @@ if _db_available:
         to_collect = Column(String, nullable=True)
         total_project = Column(String, nullable=True)
         sheet_tab = Column(String, nullable=True)
+        deadline_to_start = Column(String, nullable=True)
+
+    class CustomerEmailHistory(Base):
+        __tablename__ = "customer_email_history"
+        __table_args__ = (UniqueConstraint("client_name", "pm_name", name="uq_email_history_client_pm"),)
+
+        id                = Column(Integer, primary_key=True, autoincrement=True)
+        client_name       = Column(String, nullable=False)
+        pm_name           = Column(String, nullable=False)
+        customer_email    = Column(String, nullable=False)
+        last_sent_at      = Column(Date, nullable=True)
+        last_sent_subject = Column(String, nullable=True)
+        email_snippets    = Column(Text, nullable=True)
+        fetched_at        = Column(DateTime(timezone=True), nullable=True)
 
     class AppConfig(Base):
         __tablename__ = "app_config"
@@ -158,6 +172,7 @@ def _row_to_dict(row: "CaseyActiveJob") -> dict:
         "to_collect": row.to_collect,
         "total_project": row.total_project,
         "sheet_tab": row.sheet_tab,
+        "deadline_to_start": row.deadline_to_start,
     }
 
 
@@ -182,6 +197,7 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS total_project TEXT"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS sheet_tab VARCHAR"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS pm_communication_history TEXT"))
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS deadline_to_start VARCHAR"))
             conn.commit()
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
@@ -456,7 +472,7 @@ def upsert_active_job(job: dict) -> None:
                           "hubspot_deal_id", "hubspot_contact_id", "hubspot_owner_name",
                           "customer_email", "customer_phone", "client_mood", "complaint_note",
                           "job_description", "estimator_name", "to_collect", "total_project",
-                          "sheet_tab"):
+                          "sheet_tab", "deadline_to_start"):
                 existing[field] = job.get(field)
             existing["synced_at"] = now
         else:
@@ -492,6 +508,7 @@ def upsert_active_job(job: dict) -> None:
                 row.to_collect = job.get("to_collect")
                 row.total_project = job.get("total_project")
                 row.sheet_tab = job.get("sheet_tab")
+                row.deadline_to_start = job.get("deadline_to_start")
                 row.synced_at = now
                 # Only overwrite hubspot_contact_id if provided
                 if job.get("hubspot_contact_id"):
@@ -525,6 +542,7 @@ def upsert_active_job(job: dict) -> None:
                     to_collect=job.get("to_collect"),
                     total_project=job.get("total_project"),
                     sheet_tab=job.get("sheet_tab"),
+                    deadline_to_start=job.get("deadline_to_start"),
                     escalation_flag=False,
                     synced_at=now,
                 ))
@@ -740,6 +758,87 @@ def get_summary() -> dict[str, int]:
     except Exception as e:
         logger.error(f"DB error in get_summary: {e}")
         return {"total": 0, "due_for_update": 0, "escalated": 0, "up_to_date": 0}
+
+
+# --- Customer email history (Gmail-based contact tracking) ---
+
+def get_email_history(client_name: str, pm_name: str) -> "CustomerEmailHistory | None":
+    if not _db_available:
+        return None
+    try:
+        with _Session() as session:
+            row = (
+                session.query(CustomerEmailHistory)
+                .filter_by(client_name=client_name, pm_name=pm_name or "")
+                .first()
+            )
+            if row:
+                session.expunge(row)
+            return row
+    except Exception as e:
+        logger.error(f"DB error in get_email_history ({client_name}): {e}")
+        return None
+
+
+def upsert_email_history(
+    client_name: str,
+    pm_name: str,
+    customer_email: str,
+    last_sent_at: "date | None",
+    last_sent_subject: str,
+    email_snippets: str,
+    fetched_at: datetime,
+) -> None:
+    if not _db_available:
+        return
+    try:
+        with _Session() as session:
+            row = (
+                session.query(CustomerEmailHistory)
+                .filter_by(client_name=client_name, pm_name=pm_name or "")
+                .first()
+            )
+            if row:
+                row.customer_email = customer_email
+                row.last_sent_at = last_sent_at
+                row.last_sent_subject = last_sent_subject
+                row.email_snippets = email_snippets
+                row.fetched_at = fetched_at
+            else:
+                session.add(CustomerEmailHistory(
+                    client_name=client_name,
+                    pm_name=pm_name or "",
+                    customer_email=customer_email,
+                    last_sent_at=last_sent_at,
+                    last_sent_subject=last_sent_subject,
+                    email_snippets=email_snippets,
+                    fetched_at=fetched_at,
+                ))
+            session.commit()
+    except Exception as e:
+        logger.error(f"DB error in upsert_email_history ({client_name}): {e}")
+
+
+def should_fetch_email_history(client_name: str, pm_name: str) -> bool:
+    """True if no row exists yet, or the row's fetched_at is more than 23 hours old."""
+    if not _db_available:
+        return True
+    try:
+        with _Session() as session:
+            row = (
+                session.query(CustomerEmailHistory)
+                .filter_by(client_name=client_name, pm_name=pm_name or "")
+                .first()
+            )
+            if not row or row.fetched_at is None:
+                return True
+            fetched_at = row.fetched_at
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+            return fetched_at < datetime.now(timezone.utc) - timedelta(hours=23)
+    except Exception as e:
+        logger.error(f"DB error in should_fetch_email_history ({client_name}): {e}")
+        return True
 
 
 # --- Casey alert deduplication (unchanged) ---

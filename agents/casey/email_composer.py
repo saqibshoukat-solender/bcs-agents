@@ -67,9 +67,11 @@ def compose_customer_update_email(
     total_project: str = "",
     estimator_name: str = "",
     sheet_tab: str = "",
+    email_history: str = "",
 ) -> dict:
     """Use Anthropic API to compose a customer update email.
     scenario: 'not_started' | 'in_progress' | 'invoice_reminder' | 'new_job_intro'
+    email_history: optional recent PM-to-customer email snippets for LLM context
     Returns {"subject": ..., "body_html": ...}
     """
     scenario_instruction = _SCENARIO_INSTRUCTIONS.get(scenario, _SCENARIO_INSTRUCTIONS["in_progress"])
@@ -100,6 +102,16 @@ def compose_customer_update_email(
 
     context_block = "\n".join(context_lines) if context_lines else "No additional context."
 
+    email_history_block = ""
+    if email_history:
+        email_history_block = f"""
+Recent PM-to-customer email history (use this to write a natural follow-up,
+reference prior conversations where relevant, do not repeat what was already said):
+---
+{email_history}
+---
+"""
+
     prompt = f"""Scenario: {scenario_instruction}
 
 Customer name: {customer_name}
@@ -107,7 +119,7 @@ PM name (sender): {pm_name}
 --- Job context ---
 {context_block}
 ---
-
+{email_history_block}
 Address the customer by first name only.
 Include one line encouraging them to reply with any questions.
 Do NOT include a subject line in the body — it goes in a separate JSON field.

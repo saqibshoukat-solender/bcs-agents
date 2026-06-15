@@ -24,7 +24,7 @@ def _pm_email(pm_name: str) -> str:
     return ""
 
 
-def _flag(client_name: str, pm_name: str, flag_type: str, details: str, urgency: str) -> dict[str, Any]:
+def _flag(client_name: str, pm_name: str, flag_type: str, details: str, urgency: str, last_contact_date: str = "") -> dict[str, Any]:
     return {
         "job_id": f"{client_name}|{pm_name}",
         "flag_type": flag_type,
@@ -33,22 +33,24 @@ def _flag(client_name: str, pm_name: str, flag_type: str, details: str, urgency:
         "client_name": client_name,
         "pm_name": pm_name,
         "pm_email": _pm_email(pm_name),
+        "last_contact_date": last_contact_date,
     }
 
 
-def check_stale_records(sheet_jobs: list) -> list[dict[str, Any]]:
-    """Flag jobs where last PM contact (most_recent_contact, falling back to PM history) is > 7 days ago."""
+def check_stale_records(sheet_jobs: list, contact_date_map: "dict | None" = None) -> list[dict[str, Any]]:
+    """Flag jobs where last contact (from contact_date_map: Gmail, falling back to sheet) is > 7 days ago."""
+    contact_date_map = contact_date_map or {}
     today = date.today()
     flags = []
     for job in sheet_jobs:
         client_name = job["client_name"]
         pm_name = job.get("pm_name", "")
 
-        last_pm_contact = job.get("last_pm_contact")  # already a date | None from sheets.py
-        if last_pm_contact is None:
+        last_contact = contact_date_map.get(client_name)
+        if last_contact is None:
             continue
 
-        days_since_pm = (today - last_pm_contact).days
+        days_since_pm = (today - last_contact).days
         if days_since_pm <= 7:
             continue
 
@@ -56,15 +58,17 @@ def check_stale_records(sheet_jobs: list) -> list[dict[str, Any]]:
         flags.append(_flag(
             client_name, pm_name,
             "stale_record",
-            f"No PM contact in {days_since_pm} days — last contact: {last_pm_contact}",
+            f"No PM contact in {days_since_pm} days — last contact: {last_contact}",
             urgency,
+            last_contact_date=str(last_contact),
         ))
     logger.info(f"check_stale_records: {len(flags)} flags")
     return flags
 
 
-def check_missing_pm(sheet_jobs: list) -> list[dict[str, Any]]:
+def check_missing_pm(sheet_jobs: list, contact_date_map: "dict | None" = None) -> list[dict[str, Any]]:
     """Flag jobs with no recognised PM that start within 14 days."""
+    contact_date_map = contact_date_map or {}
     today = date.today()
     pm_config = _get_pm_config()
     flags = []
@@ -93,18 +97,21 @@ def check_missing_pm(sheet_jobs: list) -> list[dict[str, Any]]:
         if use_date is None:
             continue
 
+        last_contact = contact_date_map.get(client_name)
         flags.append(_flag(
             client_name, pm_name,
             "missing_pm",
             f"No PM assigned, job starts {use_date}",
             "urgent",
+            last_contact_date=str(last_contact) if last_contact else "",
         ))
     logger.info(f"check_missing_pm: {len(flags)} flags")
     return flags
 
 
-def check_unconfirmed_crew(sheet_jobs: list) -> list[dict[str, Any]]:
+def check_unconfirmed_crew(sheet_jobs: list, contact_date_map: "dict | None" = None) -> list[dict[str, Any]]:
     """Flag jobs with no contractor assigned that start within 7 days."""
+    contact_date_map = contact_date_map or {}
     today = date.today()
     flags = []
     for job in sheet_jobs:
@@ -131,11 +138,13 @@ def check_unconfirmed_crew(sheet_jobs: list) -> list[dict[str, Any]]:
         if use_date is None:
             continue
 
+        last_contact = contact_date_map.get(client_name)
         flags.append(_flag(
             client_name, pm_name,
             "unconfirmed_crew",
             f"No contractor assigned, job starts {use_date}",
             "urgent",
+            last_contact_date=str(last_contact) if last_contact else "",
         ))
     logger.info(f"check_unconfirmed_crew: {len(flags)} flags")
     return flags
@@ -151,8 +160,9 @@ def _is_nonzero_amount(value: str) -> bool:
         return bool(cleaned)
 
 
-def _check_sheet_balance(job: dict) -> "dict[str, Any] | None":
+def _check_sheet_balance(job: dict, contact_date_map: "dict | None" = None) -> "dict[str, Any] | None":
     """Flag a job with an outstanding sheet balance, deposit > 30 days ago, and no recent contact."""
+    contact_date_map = contact_date_map or {}
     today = date.today()
     client_name = job["client_name"]
     pm_name = job.get("pm_name", "")
@@ -170,38 +180,37 @@ def _check_sheet_balance(job: dict) -> "dict[str, Any] | None":
     if (today - deposit_date).days <= 30:
         return None
 
-    most_recent_contact = job.get("most_recent_contact", "").strip()
-    if most_recent_contact:
-        try:
-            contact_date = parse_latest_date(most_recent_contact)
-        except Exception:
-            contact_date = None
-        if contact_date is not None and (today - contact_date).days <= 30:
-            return None
+    contact_date = contact_date_map.get(client_name)
+    if contact_date is not None and (today - contact_date).days <= 30:
+        return None
 
     return _flag(
         client_name, pm_name,
         "dropped_invoice",
         f"Outstanding balance {to_collect}, deposit {deposit_date}, no recent contact",
         "warning",
+        last_contact_date=str(contact_date) if contact_date else "",
     )
 
 
-def check_dropped_invoices(sheet_jobs: list) -> list[dict[str, Any]]:
+def check_dropped_invoices(sheet_jobs: list, contact_date_map: "dict | None" = None) -> list[dict[str, Any]]:
     """Flag jobs with an overdue QB invoice, falling back to the sheet balance check."""
+    contact_date_map = contact_date_map or {}
     flags = []
     for job in sheet_jobs:
-        sheet_flag = _check_sheet_balance(job)
+        sheet_flag = _check_sheet_balance(job, contact_date_map)
 
         qb_status = get_invoice_status_for_customer(job["client_name"])
         qb_flag = None
         if qb_status and qb_status["status"] == "overdue" and qb_status["days_overdue"] > 30:
+            last_contact = contact_date_map.get(job["client_name"])
             qb_flag = _flag(
                 job["client_name"], job.get("pm_name", ""),
                 "dropped_invoice",
                 f"QB invoice overdue {qb_status['days_overdue']} days — "
                 f"${qb_status['amount_due']:,.2f} outstanding",
                 "urgent" if qb_status["days_overdue"] > 60 else "warning",
+                last_contact_date=str(last_contact) if last_contact else "",
             )
 
         if qb_flag:
@@ -212,9 +221,15 @@ def check_dropped_invoices(sheet_jobs: list) -> list[dict[str, Any]]:
     return flags
 
 
-def check_job_readiness(sheet_jobs: list, hs_deals: list, db_jobs: "dict | None" = None) -> list[dict[str, Any]]:
+def check_job_readiness(
+    sheet_jobs: list,
+    hs_deals: list,
+    db_jobs: "dict | None" = None,
+    contact_date_map: "dict | None" = None,
+) -> list[dict[str, Any]]:
     """Flag sheet jobs that have no matching HubSpot deal (data sync issue)."""
     db_jobs = db_jobs or {}
+    contact_date_map = contact_date_map or {}
     hs_names = [
         d.get("properties", {}).get("dealname", "").lower()
         for d in hs_deals
@@ -239,11 +254,13 @@ def check_job_readiness(sheet_jobs: list, hs_deals: list, db_jobs: "dict | None"
         if matched:
             continue
 
+        last_contact = contact_date_map.get(client_name)
         flags.append(_flag(
             client_name, pm_name,
             "readiness_sync",
             f"Job in sheet but no HubSpot deal found for '{client_name}'",
             "info",
+            last_contact_date=str(last_contact) if last_contact else "",
         ))
     logger.info(f"check_job_readiness: {len(flags)} flags")
     return flags
