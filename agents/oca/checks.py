@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any
 
-from integrations.sheets import parse_latest_date
+from integrations.sheets import parse_latest_date, is_valid_pm
 from integrations.quickbooks import get_invoice_status_for_customer
 from utils.logger import get_logger
 
@@ -22,10 +22,6 @@ def _pm_email(pm_name: str) -> str:
         if pm.get("full_name") == pm_name:
             return pm.get("email", "")
     return ""
-
-
-def _known_pm_names() -> set:
-    return {pm.get("full_name", "") for pm in _get_pm_config()}
 
 
 def _flag(client_name: str, pm_name: str, flag_type: str, details: str, urgency: str) -> dict[str, Any]:
@@ -70,12 +66,13 @@ def check_stale_records(sheet_jobs: list) -> list[dict[str, Any]]:
 def check_missing_pm(sheet_jobs: list) -> list[dict[str, Any]]:
     """Flag jobs with no recognised PM that start within 14 days."""
     today = date.today()
+    pm_config = _get_pm_config()
     flags = []
     for job in sheet_jobs:
         client_name = job["client_name"]
         pm_name = job.get("pm_name", "").strip()
 
-        if pm_name and pm_name in _known_pm_names():
+        if is_valid_pm(pm_name, pm_config):
             continue
 
         # Find the earliest upcoming start date within 14 days
@@ -173,8 +170,14 @@ def _check_sheet_balance(job: dict) -> "dict[str, Any] | None":
     if (today - deposit_date).days <= 30:
         return None
 
-    if job.get("most_recent_contact", "").strip():
-        return None
+    most_recent_contact = job.get("most_recent_contact", "").strip()
+    if most_recent_contact:
+        try:
+            contact_date = parse_latest_date(most_recent_contact)
+        except Exception:
+            contact_date = None
+        if contact_date is not None and (today - contact_date).days <= 30:
+            return None
 
     return _flag(
         client_name, pm_name,
@@ -209,8 +212,9 @@ def check_dropped_invoices(sheet_jobs: list) -> list[dict[str, Any]]:
     return flags
 
 
-def check_job_readiness(sheet_jobs: list, hs_deals: list) -> list[dict[str, Any]]:
+def check_job_readiness(sheet_jobs: list, hs_deals: list, db_jobs: "dict | None" = None) -> list[dict[str, Any]]:
     """Flag sheet jobs that have no matching HubSpot deal (data sync issue)."""
+    db_jobs = db_jobs or {}
     hs_names = [
         d.get("properties", {}).get("dealname", "").lower()
         for d in hs_deals
@@ -220,6 +224,12 @@ def check_job_readiness(sheet_jobs: list, hs_deals: list) -> list[dict[str, Any]
         client_name = job["client_name"]
         pm_name = job.get("pm_name", "")
         client_lower = client_name.lower()
+
+        # _sync_all() writes hubspot_deal_id to the DB synchronously as soon as a
+        # deal is found/created — trust that even if HubSpot's search index (used
+        # to build hs_deals) hasn't caught up to a deal created this same run.
+        if db_jobs.get(client_name, {}).get("hubspot_deal_id"):
+            continue
 
         matched = any(
             client_lower in dn or dn in client_lower

@@ -31,7 +31,7 @@ def _save_tokens(token_data: dict, realm_id: str = "") -> None:
     set_config("qb_access_token", token_data["access_token"])
     if token_data.get("refresh_token"):
         set_config("qb_refresh_token", token_data["refresh_token"])
-    set_config("qb_token_expires_at", (now + timedelta(seconds=expires_in)).isoformat())
+    set_config("qb_token_expiry", (now + timedelta(seconds=expires_in)).isoformat())
     if realm_id:
         set_config("qb_realm_id", realm_id)
     logger.info("QuickBooks tokens saved")
@@ -97,7 +97,7 @@ def _refresh_access_token() -> "str | None":
 def _get_valid_access_token() -> "str | None":
     """Return a usable access token — refreshing it first if it's missing/near expiry."""
     access_token = cfg("qb_access_token")
-    expires_at_str = cfg("qb_token_expires_at")
+    expires_at_str = cfg("qb_token_expiry")
     if access_token and expires_at_str:
         try:
             expires_at = datetime.fromisoformat(expires_at_str)
@@ -114,12 +114,25 @@ def _qb_get(path: str) -> "dict | None":
     if not (realm_id and access_token):
         logger.warning("_qb_get: QuickBooks not connected (missing realm_id or access token)")
         return None
+    url = f"{API_BASE}/v3/company/{realm_id}/{path}"
     try:
         resp = requests.get(
-            f"{API_BASE}/v3/company/{realm_id}/{path}",
+            url,
             headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             timeout=15,
         )
+        if resp.status_code in (401, 403):
+            # Our local expiry said the token was still good, but QB rejected it
+            # anyway (e.g. revoked/rotated early) — force a refresh and retry once.
+            logger.warning(f"QuickBooks API {resp.status_code} on {path} — forcing token refresh and retrying")
+            access_token = _refresh_access_token()
+            if not access_token:
+                return None
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+                timeout=15,
+            )
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as e:

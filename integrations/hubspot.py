@@ -2,6 +2,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import re
 import requests
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -443,6 +444,132 @@ def search_contact_by_name(first_name: str, last_name: str = "") -> "str | None"
     except requests.RequestException as e:
         logger.error(f"HubSpot search_contact_by_name({first_name} {last_name}): {e}")
         return None
+
+
+def search_contact_by_phone(phone_digits: str) -> "str | None":
+    """Return contact ID for the first contact matching phone, or None.
+
+    `phone_digits` must be digits only (no formatting). Tries the 'phone'
+    property first, then falls back to 'mobilephone'.
+    """
+    if not phone_digits:
+        return None
+    url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+    for prop in ("phone", "mobilephone"):
+        payload = {
+            "filterGroups": [{"filters": [{"propertyName": prop, "operator": "CONTAINS_TOKEN", "value": phone_digits}]}],
+            "properties": ["email", "firstname", "lastname", "phone", "mobilephone"],
+            "limit": 1,
+        }
+        try:
+            resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
+                                  json=payload, timeout=10)
+            if resp.status_code >= 500:
+                _trip_circuit(f"search_contact_by_phone {phone_digits}")
+                return None
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            if results:
+                return results[0]["id"]
+        except requests.RequestException as e:
+            logger.error(f"HubSpot search_contact_by_phone({phone_digits}, {prop}): {e}")
+    return None
+
+
+def get_deals_for_contact(contact_id: str) -> list[dict[str, Any]]:
+    """Return deal objects ({"id", "properties": {"dealname": ...}}) associated with a contact."""
+    if not contact_id:
+        return []
+    try:
+        resp = requests.get(
+            f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}/associations/deals",
+            headers=_headers(),
+            timeout=10,
+        )
+        if resp.status_code >= 500:
+            _trip_circuit(f"get_deals_for_contact {contact_id}")
+            return []
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+    except requests.RequestException as e:
+        logger.error(f"HubSpot get_deals_for_contact({contact_id}) associations: {e}")
+        return []
+
+    deals = []
+    for r in results:
+        deal_id = r.get("id") or r.get("toObjectId")
+        if not deal_id:
+            continue
+        try:
+            deal_resp = requests.get(
+                f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}",
+                headers=_headers(),
+                params={"properties": "dealname,dealstage"},
+                timeout=10,
+            )
+            deal_resp.raise_for_status()
+            data = deal_resp.json()
+            deals.append({"id": str(data.get("id")), "properties": data.get("properties", {})})
+        except requests.RequestException as e:
+            logger.error(f"HubSpot get_deals_for_contact: failed to fetch deal {deal_id}: {e}")
+    return deals
+
+
+def find_deal_for_job(
+    client_name: str,
+    job_type: str,
+    email: str,
+    phone: str,
+    db_deal_id: "str | None",
+) -> "tuple[str | None, str]":
+    """Resolve the HubSpot deal for one job (a client + job_type combination).
+
+    A single customer can have multiple deals — one per job type — so a plain
+    client-name match is not enough to pick the right deal. Returns
+    (deal_id, layer) where layer is one of:
+      "db"      — deal_id came from the local DB (already linked)
+      "contact" — matched via the customer's HubSpot contact + job_type
+      "name"    — matched via deal-name search on client_name + job_type
+      "none"    — no match found; caller decides whether to create or skip
+    """
+    # Layer 1: already linked in the local DB
+    if db_deal_id:
+        return db_deal_id, "db"
+
+    contact_id = None
+
+    # Layer 2a: find contact by email
+    if email:
+        contact_id = search_contact_by_email(email)
+
+    # Layer 2b: find contact by phone if email lookup failed
+    if not contact_id and phone:
+        clean_phone = re.sub(r"\D", "", phone)
+        if clean_phone:
+            contact_id = search_contact_by_phone(clean_phone)
+
+    # Layer 2c: if a contact was found, match their deals by job type
+    if contact_id:
+        deals = get_deals_for_contact(contact_id)
+        for deal in deals:
+            deal_name = deal.get("properties", {}).get("dealname", "")
+            if job_type and job_type.lower()[:15] in deal_name.lower():
+                logger.info(f"Matched deal by contact+job_type for {client_name} / {job_type}: {deal['id']}")
+                return deal["id"], "contact"
+        logger.warning(
+            f"Contact found for {client_name} but no deal matched job type '{job_type}' — falling through to name search"
+        )
+
+    # Layer 3: deal-name search by client name, filtered by job type
+    deals = search_deals_by_client_name(client_name)
+    for deal in deals:
+        deal_name = deal.get("properties", {}).get("dealname", "")
+        if job_type and job_type.lower()[:15] in deal_name.lower():
+            logger.info(f"Matched deal by name+job_type for {client_name}: {deal['id']}")
+            return deal["id"], "name"
+
+    # Layer 4: no match — caller decides whether to create or skip
+    return None, "none"
 
 
 def create_contact(firstname: str, lastname: str = "", email: str = "", phone: str = "") -> "str | None":

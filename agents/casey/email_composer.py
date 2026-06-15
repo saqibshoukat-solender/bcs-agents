@@ -42,6 +42,13 @@ _SCENARIO_INSTRUCTIONS = {
         "payment arrangements as the project nears completion — per the system rules, never "
         "mention any amount and never sound like collections."
     ),
+    "new_job_intro": (
+        "This is the first email Casey sends after the deposit has been received and the "
+        "project enters operations. Give the customer a warm welcome, confirm that their "
+        "deposit was received, introduce the handoff from sales to the operations team, and "
+        "set the expectation that their PM will be in touch within 2 weeks to confirm the "
+        "start date. Sign off from the PM. Keep the email under 150 words."
+    ),
 }
 
 
@@ -62,7 +69,7 @@ def compose_customer_update_email(
     sheet_tab: str = "",
 ) -> dict:
     """Use Anthropic API to compose a customer update email.
-    scenario: 'not_started' | 'in_progress' | 'invoice_reminder'
+    scenario: 'not_started' | 'in_progress' | 'invoice_reminder' | 'new_job_intro'
     Returns {"subject": ..., "body_html": ...}
     """
     scenario_instruction = _SCENARIO_INSTRUCTIONS.get(scenario, _SCENARIO_INSTRUCTIONS["in_progress"])
@@ -150,6 +157,17 @@ Return ONLY the JSON, no markdown backticks, no other text."""
                 f"<p>Thank you for choosing Blue Collar Scholars! We wanted to reach out and confirm that your "
                 f"project is scheduled and our team is ready. We'll be in touch as we get closer to the start date. "
                 f"Please reach out with any questions.</p>"
+                f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"
+            )
+        elif scenario == "new_job_intro":
+            body = (
+                f"<p>Hi {first_name},</p>"
+                f"<p>Welcome to Blue Collar Scholars! We're happy to let you know that your deposit has been "
+                f"received and your project is now moving into our operations phase.</p>"
+                f"<p>Your Project Manager, {pm_name}, will be in touch within the next two weeks to confirm "
+                f"your start date and walk you through next steps.</p>"
+                f"<p>Thank you for choosing us — please don't hesitate to reach out with any questions in "
+                f"the meantime.</p>"
                 f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"
             )
         else:

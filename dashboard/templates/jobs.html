@@ -55,7 +55,12 @@
         {% for job in jobs %}
         <tr class="hover:bg-slate-50 transition-colors">
           {% if view == 'to_start' %}
-          <td class="px-4 py-3 font-medium text-slate-800">{{ job.client_name }}</td>
+          <td class="px-4 py-3 font-medium text-slate-800">
+            {{ job.client_name }}
+            {% if hubspot_sync_mode == 'link_only' and not job.hubspot_deal_id %}
+            <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700" title="No HubSpot deal linked (link-only mode)">⚠ Not linked</span>
+            {% endif %}
+          </td>
           <td class="px-4 py-3 text-slate-600">{{ job.job_type or '—' }}</td>
           <td class="px-4 py-3 text-slate-600">{{ job.pm_name or '—' }}</td>
           <td class="px-4 py-3 text-slate-500">{{ job.deposit_date or '—' }}</td>
@@ -66,7 +71,12 @@
             </span>
           </td>
           {% else %}
-          <td class="px-4 py-3 font-medium text-slate-800">{{ job.client_name }}</td>
+          <td class="px-4 py-3 font-medium text-slate-800">
+            {{ job.client_name }}
+            {% if hubspot_sync_mode == 'link_only' and not job.hubspot_deal_id %}
+            <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700" title="No HubSpot deal linked (link-only mode)">⚠ Not linked</span>
+            {% endif %}
+          </td>
           <td class="px-4 py-3 text-slate-600">{{ job.job_type or '—' }}</td>
           <td class="px-4 py-3 text-slate-600">{{ job.pm_name or '—' }}</td>
           <td class="px-4 py-3 text-slate-500">{{ job.start_date or '—' }}</td>

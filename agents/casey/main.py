@@ -1,8 +1,8 @@
 import os
 import sys
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from dotenv import load_dotenv
-from integrations.sheets import get_active_jobs
+from integrations.sheets import get_active_jobs, parse_latest_date
 from integrations.hubspot import (
     hs_available,
     update_deal_properties,
@@ -17,6 +17,7 @@ from db.state_store import (
     get_jobs_due_for_update,
     get_all_active_jobs,
     set_update_sent,
+    set_next_scheduled_update,
     set_escalation,
     get_summary,
     was_alert_sent_today,
@@ -367,6 +368,18 @@ def _run():
         job["qb_invoice_status"] = get_invoice_status_for_customer(job["client_name"])
         scenario = _determine_scenario(job)
 
+        # ── New-job intro: first time Casey has ever processed this job ────────
+        if job.get("last_customer_update_sent") is None and job.get("next_scheduled_update") is None:
+            deposit_date = parse_latest_date(job.get("deposit_date", ""))
+            days_since_deposit = (date.today() - deposit_date).days if deposit_date else None
+            if days_since_deposit is not None and 0 <= days_since_deposit <= 14:
+                scenario = "new_job_intro"
+            else:
+                set_next_scheduled_update(client_name, pm_name, date.today() + timedelta(days=7))
+                logger.info(f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
+                skipped += 1
+                continue
+
         # ── Escalation checks ────────────────────────────────────────────────
         escalation_reason = None
         if days_since_contact is not None and days_since_contact >= 14:
@@ -434,7 +447,6 @@ def _run():
         )
 
         if sent:
-            from datetime import timedelta
             next_update = date.today() + timedelta(days=7)
             set_update_sent(client_name, pm_name)
             record_alert_sent(job_id, "update_due", client_name)

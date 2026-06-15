@@ -143,17 +143,31 @@ def parse_latest_date(cell_value: str) -> "date | None":
 _INVALID_PM_VALUES = {"construction", "estimating", "sales", ""}
 
 
+def is_valid_pm(pm_name: str, pm_config: list) -> bool:
+    """True if pm_name is non-empty and matches a known PM's full_name in pm_config.
+
+    Used by OCA's check_missing_pm to flag jobs with no recognised PM, and by
+    Casey to decide whether a job has someone to send the customer-update email as.
+    """
+    name = (pm_name or "").strip()
+    if not name:
+        return False
+    return any(pm.get("full_name", "") == name for pm in pm_config)
+
+
 def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
     client = row.get("Client", "").strip()
     if not client:
         return None
     pm_raw = normalize_pm_name(row.get("Project Manager", ""))
     if pm_raw.strip().lower() in _INVALID_PM_VALUES:
-        logger.warning(f"Skipping row with invalid PM name '{pm_raw}' for client '{client}'")
-        return None
+        logger.info(f"Row for client '{client}' has no valid PM name (raw='{pm_raw}')")
+        pm_name = ""
+    else:
+        pm_name = pm_raw
     return {
         "client_name":           client,
-        "pm_name":               pm_raw,
+        "pm_name":               pm_name,
         "job_type":              row.get("Type of Job", "").strip(),
         "start_date":            row.get("Start Date", "").strip(),
         "estimated_start_window": row.get("Realistic Start Date", "").strip(),

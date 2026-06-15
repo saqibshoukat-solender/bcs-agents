@@ -646,6 +646,30 @@ def set_update_sent(client_name: str, pm_name: str) -> None:
         logger.error(f"DB error in set_update_sent ({client_name}): {e}")
 
 
+def set_next_scheduled_update(client_name: str, pm_name: str, next_date: date) -> None:
+    """Set next_scheduled_update without marking last_customer_update_sent.
+
+    Used when the welcome-email window has passed for a job that has never
+    been emailed — defers the job into the normal update cadence.
+    """
+    if not _db_available:
+        key = (client_name, pm_name or "")
+        if key in _memory_jobs:
+            _memory_jobs[key]["next_scheduled_update"] = next_date
+        return
+
+    try:
+        with _Session() as session:
+            row = session.query(CaseyActiveJob).filter_by(
+                client_name=client_name, pm_name=pm_name or ""
+            ).first()
+            if row:
+                row.next_scheduled_update = next_date
+                session.commit()
+    except Exception as e:
+        logger.error(f"DB error in set_next_scheduled_update ({client_name}): {e}")
+
+
 def set_escalation(client_name: str, pm_name: str, reason: str) -> None:
     if not _db_available:
         key = (client_name, pm_name or "")

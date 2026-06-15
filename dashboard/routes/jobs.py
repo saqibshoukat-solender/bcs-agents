@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from db.state_store import (
     _Session, _db_available,
 )
+from config.loader import cfg
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -93,6 +94,7 @@ async def jobs_to_start(request: Request):
         "view": "to_start",
         "jobs": jobs,
         "empty_msg": "No upcoming jobs found in the local database.",
+        "hubspot_sync_mode": cfg("hubspot_sync_mode") or "create_if_missing",
     })
 
 
@@ -105,6 +107,7 @@ async def jobs_in_process(request: Request):
         "view": "in_process",
         "jobs": jobs,
         "empty_msg": "No jobs in progress in the local database.",
+        "hubspot_sync_mode": cfg("hubspot_sync_mode") or "create_if_missing",
     })
 
 

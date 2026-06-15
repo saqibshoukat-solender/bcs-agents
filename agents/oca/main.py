@@ -41,9 +41,8 @@ from integrations.hubspot import (
     DEPOSIT_INVOICE_STAGE_ID,
     get_open_deals,
     create_deal,
-    get_all_owners,
     hs_available,
-    search_deals_by_client_name,
+    find_deal_for_job,
     search_contact_by_email,
     search_contact_by_name,
     create_contact,
@@ -85,27 +84,35 @@ def _get_hs_custom_field_map() -> dict:
     return result
 
 
-def _sync_all(sheet_jobs: list, hs_deals: list) -> None:
+def _sync_all(sheet_jobs: list, hs_deals: list) -> dict:
     """
     OCA sync: keep Google Sheet, HubSpot, and local DB aligned.
 
-    Deal/contact resolution order per job (stops at first hit):
-      Layer 1 — DB: if casey_active_jobs already has hubspot_deal_id / hubspot_contact_id, use it.
-      Layer 2 — HubSpot search: search_deals_by_client_name / search_contact_by_email
-                / search_contact_by_name. If found, persist the ID to the DB immediately.
-      Layer 3 — create: if nothing found, create a new deal/contact and persist its ID
-                immediately so the next job (or the next run) sees it via Layer 1.
+    A single customer can have multiple deals — one per job type — so deal
+    resolution is keyed by (client_name, job_type), not client_name alone.
+
+    Deal resolution order per job (stops at first hit), via find_deal_for_job():
+      Layer 1 — DB: casey_active_jobs already has a hubspot_deal_id for this
+                (client_name, job_type).
+      Layer 2 — Contact match: find the customer's HubSpot contact (by email,
+                then phone) and match one of their deals by job_type.
+      Layer 3 — Deal-name search: search deals by client_name, filtered by
+                job_type.
+      Layer 4 — create or skip, depending on hubspot_sync_mode:
+                "create_if_missing" (default) creates a new deal;
+                "link_only" leaves the job unlinked.
+
+    Returns a summary dict of HubSpot sync counters for the daily digest.
     """
     pipeline_id = cfg("hubspot_pipeline_id") or "default"
+    sync_mode = cfg("hubspot_sync_mode") or "create_if_missing"
 
-    # Pre-load all DB jobs for Layer 1 lookup (one query, keyed by client_name)
+    # Pre-load all DB jobs for Layer 1 lookup, keyed by (client_name, job_type) —
+    # a customer can have multiple deals for different job types.
     from db.state_store import get_all_active_jobs
-    db_map: dict[str, dict] = {j["client_name"]: j for j in get_all_active_jobs()}
-
-    try:
-        owners = get_all_owners()
-    except Exception:
-        owners = {}
+    db_map: dict[tuple[str, str], dict] = {
+        (j["client_name"], j.get("job_type") or ""): j for j in get_all_active_jobs()
+    }
 
     try:
         from db.state_store import get_sales_rep_list
@@ -118,6 +125,9 @@ def _sync_all(sheet_jobs: list, hs_deals: list) -> None:
     synced = 0
     created_deals = 0
     created_contacts = 0
+    matched_by_contact = 0
+    matched_by_name = 0
+    not_linked = 0
     errors = 0
 
     for job in sheet_jobs:
@@ -134,46 +144,56 @@ def _sync_all(sheet_jobs: list, hs_deals: list) -> None:
         hubspot_contact_id: "str | None" = None
         contact_needs_association = False
 
-        # ── Deal Layer 1: DB check ───────────────────────────────────────────
-        existing_db = db_map.get(client_name)
+        # ── Deal Layer 1: DB check, keyed by (client_name, job_type) ─────────
+        existing_db = db_map.get((client_name, job_type))
         if existing_db:
-            if existing_db.get("hubspot_deal_id"):
-                hubspot_deal_id = existing_db["hubspot_deal_id"]
-                hubspot_owner_name = existing_db.get("hubspot_owner_name") or ""
-                logger.info(f"Using existing deal from DB for {client_name}: {hubspot_deal_id}")
+            hubspot_owner_name = existing_db.get("hubspot_owner_name") or ""
             if existing_db.get("hubspot_contact_id"):
                 hubspot_contact_id = existing_db["hubspot_contact_id"]
+            if existing_db.get("hubspot_deal_id"):
+                hubspot_deal_id = existing_db["hubspot_deal_id"]
+                logger.info(f"Using existing deal from DB for {client_name} / {job_type}: {hubspot_deal_id}")
 
-        # ── Deal Layer 2: HubSpot search ─────────────────────────────────────
+        # ── Deal Layers 2-4: contact+job_type match, deal-name+job_type match, ─
+        # then create-or-skip per hubspot_sync_mode ──────────────────────────
         if not hubspot_deal_id and hs_available():
-            found = search_deals_by_client_name(client_name)
-            if found:
-                hubspot_deal_id = found[0]["id"]
-                owner_id = found[0].get("properties", {}).get("hubspot_owner_id", "")
-                hubspot_owner_name = owners.get(str(owner_id), "") if owner_id else ""
-                logger.info(f"Found existing HubSpot deal for {client_name}: {hubspot_deal_id}")
+            email = job.get("email", "").strip()
+            phone = job.get("customer_phone", "").strip()
+            found_id, layer = find_deal_for_job(client_name, job_type, email, phone, None)
+
+            if found_id:
+                hubspot_deal_id = found_id
                 set_hubspot_deal_id(client_name, pm_name, hubspot_deal_id)
-
-        # ── Deal Layer 3: create ──────────────────────────────────────────────
-        if not hubspot_deal_id and hs_available():
-            owner_id = _find_owner_for_job(job, sales_reps)
-            amount_raw = job.get("total_project", "").replace("$", "").replace(",", "").strip()
-            try:
-                amount = str(float(amount_raw)) if amount_raw else ""
-            except ValueError:
-                amount = ""
-            new_id = create_deal(
-                dealname=deal_name,
-                pipeline_id=pipeline_id,
-                stage_id=DEPOSIT_INVOICE_STAGE_ID,
-                amount=amount,
-                owner_id=owner_id,
-            )
-            if new_id:
-                hubspot_deal_id = new_id
-                created_deals += 1
-                set_hubspot_deal_id(client_name, pm_name, new_id)
                 contact_needs_association = True
+                if layer == "contact":
+                    matched_by_contact += 1
+                elif layer == "name":
+                    matched_by_name += 1
+            elif sync_mode == "link_only":
+                not_linked += 1
+                logger.warning(
+                    f"hubspot_sync_mode=link_only — no HubSpot deal found for "
+                    f"'{client_name}' / '{job_type}', not creating"
+                )
+            else:
+                owner_id = _find_owner_for_job(job, sales_reps)
+                amount_raw = job.get("total_project", "").replace("$", "").replace(",", "").strip()
+                try:
+                    amount = str(float(amount_raw)) if amount_raw else ""
+                except ValueError:
+                    amount = ""
+                new_id = create_deal(
+                    dealname=deal_name,
+                    pipeline_id=pipeline_id,
+                    stage_id=DEPOSIT_INVOICE_STAGE_ID,
+                    amount=amount,
+                    owner_id=owner_id,
+                )
+                if new_id:
+                    hubspot_deal_id = new_id
+                    created_deals += 1
+                    set_hubspot_deal_id(client_name, pm_name, new_id)
+                    contact_needs_association = True
 
         # ── Contact Layer 2/3: search then create ────────────────────────────
         if not hubspot_contact_id and hs_available():
@@ -256,8 +276,16 @@ def _sync_all(sheet_jobs: list, hs_deals: list) -> None:
     logger.info(
         f"OCA sync complete — sheet jobs: {len(sheet_jobs)}, "
         f"DB upserted: {synced}, HubSpot deals created: {created_deals}, "
-        f"HubSpot contacts created: {created_contacts}, errors: {errors}"
+        f"HubSpot contacts created: {created_contacts}, "
+        f"matched by contact: {matched_by_contact}, matched by deal name: {matched_by_name}, "
+        f"not linked: {not_linked}, errors: {errors}"
     )
+    return {
+        "matched_contact": matched_by_contact,
+        "matched_name": matched_by_name,
+        "created": created_deals,
+        "not_linked": not_linked,
+    }
 
 
 def _find_owner_for_job(job: dict, sales_reps: list) -> str:
@@ -324,12 +352,18 @@ def _run() -> None:
     logger.info(f"OCA loaded {len(sheet_jobs)} sheet jobs, {len(hs_deals)} HubSpot deals")
 
     # ── Step 2: Sync — keep Sheet, HubSpot, and local DB aligned ────────────
-    _sync_all(sheet_jobs, hs_deals)
+    hs_sync_summary = _sync_all(sheet_jobs, hs_deals)
 
     # Re-fetch open deals — _sync_all() may have just created new deals, and
     # check_job_readiness() needs the up-to-date list to avoid false positives
     # on the very run that created them.
     hs_deals = get_open_deals()
+
+    # Build a lookup of deal_id/contact_id for each client_name. _sync_all() writes
+    # these synchronously, so this reflects deals created/found this run even if
+    # HubSpot's search index (hs_deals above) hasn't caught up yet.
+    from db.state_store import get_all_active_jobs
+    db_jobs = {j["client_name"]: j for j in get_all_active_jobs()}
 
     # ── Step 3: Run checks ───────────────────────────────────────────────────
     all_flags: list[dict] = []
@@ -337,17 +371,13 @@ def _run() -> None:
     all_flags.extend(check_missing_pm(sheet_jobs))
     all_flags.extend(check_unconfirmed_crew(sheet_jobs))
     all_flags.extend(check_dropped_invoices(sheet_jobs))
-    all_flags.extend(check_job_readiness(sheet_jobs, hs_deals))
+    all_flags.extend(check_job_readiness(sheet_jobs, hs_deals, db_jobs))
 
     logger.info(f"OCA detected {len(all_flags)} flags total")
 
     # ── Step 4: Process flags with deduplication + cooldown ─────────────────
     alerted = 0
     suppressed = 0
-
-    # Build a lookup of deal_id for each client_name for HS note writing
-    from db.state_store import get_all_active_jobs
-    db_jobs = {j["client_name"]: j for j in get_all_active_jobs()}
 
     # Group flags by job_id so multi-issue jobs get one combined Slack message
     flags_by_job: dict[str, list[dict]] = defaultdict(list)
@@ -400,7 +430,7 @@ def _run() -> None:
     summary   = get_active_flags_summary()
     first_run = is_first_run_today()
     if first_run:
-        send_daily_digest(summary, slack_client, sam_slack_id)
+        send_daily_digest(summary, slack_client, sam_slack_id, hs_sync_summary)
 
     if datetime.now().weekday() == 0 and first_run:
         weekly = get_weekly_summary()

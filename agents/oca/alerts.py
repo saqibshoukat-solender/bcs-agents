@@ -195,6 +195,7 @@ def send_daily_digest(
     active_flags_summary: dict[str, int],
     slack_client,
     sam_slack_id: str,
+    hs_sync_summary: "dict | None" = None,
 ) -> None:
     stale = active_flags_summary.get("stale", 0)
     missing_pm = active_flags_summary.get("missing_pm", 0)
@@ -215,6 +216,13 @@ def send_daily_digest(
         f"🔵 Info: {info_count}\n"
         f"Total active issues: {total}"
     )
+    if hs_sync_summary:
+        message += (
+            f"\nHubSpot sync: {hs_sync_summary.get('matched_contact', 0)} matched by contact, "
+            f"{hs_sync_summary.get('matched_name', 0)} matched by deal name, "
+            f"{hs_sync_summary.get('created', 0)} created new, "
+            f"{hs_sync_summary.get('not_linked', 0)} not linked (link-only)"
+        )
     recipient = sam_slack_id
     if not recipient:
         logger.warning("SAM_SLACK_USER_ID not set — sending daily digest to Josh instead")

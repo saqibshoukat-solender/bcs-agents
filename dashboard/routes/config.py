@@ -184,6 +184,43 @@ async def quickbooks_connect(request: Request):
     return RedirectResponse(auth_url)
 
 
+@router.get("/config/quickbooks/status", response_class=HTMLResponse)
+async def quickbooks_status():
+    """Status indicator for the config page: connected/expiry, or not connected.
+
+    - green  "Connected — token valid until HH:MM UTC"  (refresh token + valid expiry in the future)
+    - yellow "Connected — refreshing token"              (refresh token present, but no valid expiry yet)
+    - red    "Not connected"                              (no refresh token saved)
+    """
+    from datetime import datetime, timezone
+    from db.state_store import get_config
+
+    refresh_token = get_config("qb_refresh_token")
+    if not refresh_token:
+        return HTMLResponse(
+            '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-500">'
+            '<span class="w-2 h-2 bg-red-400 rounded-full"></span> Not connected</span>'
+        )
+
+    expires_at_str = get_config("qb_token_expiry")
+    if expires_at_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            if datetime.now(timezone.utc) < expires_at:
+                when = expires_at.strftime("%H:%M UTC")
+                return HTMLResponse(
+                    '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">'
+                    f'<span class="w-2 h-2 bg-green-500 rounded-full"></span> Connected — token valid until {when}</span>'
+                )
+        except ValueError:
+            pass
+
+    return HTMLResponse(
+        '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-yellow-600">'
+        '<span class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span> Connected — refreshing token</span>'
+    )
+
+
 @router.get("/api/config/quickbooks/callback", name="quickbooks_oauth_callback")
 async def quickbooks_oauth_callback(
     request: Request,
@@ -213,10 +250,12 @@ async def save_hubspot(
     access_token: Optional[str] = Form(None),
     pipeline_id:  Optional[str] = Form(None),
     portal_id:    Optional[str] = Form(None),
+    sync_mode:    Optional[str] = Form(None),
 ):
     if access_token: set_config("hubspot_access_token", access_token)
     if pipeline_id:  set_config("hubspot_pipeline_id",  pipeline_id)
     if portal_id:    set_config("hubspot_portal_id",    portal_id)
+    if sync_mode:    set_config("hubspot_sync_mode",    sync_mode)
     return HTMLResponse(_toast("HubSpot settings saved"))
 
 
