@@ -111,7 +111,11 @@ def get_pm_customer_email_history(
         else:
             window_start = datetime.now(timezone.utc) - timedelta(days=90)
 
-        query = f"to:{customer_email} in:sent after:{window_start.strftime('%Y/%m/%d')}"
+        query = (
+            f'to:{customer_email} in:sent after:{window_start.strftime("%Y/%m/%d")} '
+            f'-subject:"[BCS Update]"'
+        )
+        logger.info(f"Gmail query for {pm_email} → {customer_email}: {query}")
 
         list_result = service.users().messages().list(userId="me", q=query, maxResults=10).execute()
         message_ids = [m["id"] for m in list_result.get("messages", [])]

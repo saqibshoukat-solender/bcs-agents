@@ -219,6 +219,21 @@ def init_db() -> None:
                         {"k": key, "v": default_val},
                     )
             conn.commit()
+
+            # One-time migration: the Gmail history cache predates the
+            # [BCS Update] subject filter, so it may contain Casey's own
+            # automated emails mixed into "PM contact" history. Force every
+            # row to be re-fetched on the next OCA run, then never run again.
+            already_cleared = conn.execute(
+                text("SELECT value FROM app_config WHERE key = 'gmail_cache_cleared'")
+            ).fetchone()
+            if not already_cleared:
+                conn.execute(text("UPDATE customer_email_history SET fetched_at = NULL"))
+                conn.execute(
+                    text("INSERT INTO app_config (key, value) VALUES ('gmail_cache_cleared', 'true')")
+                )
+                conn.commit()
+                logger.info("One-time migration: cleared customer_email_history.fetched_at to force Gmail re-fetch")
         logger.info("Database tables verified/created")
     except Exception as e:
         logger.error(f"init_db error: {e}")
@@ -864,6 +879,32 @@ def was_alert_sent_today(deal_id: str, alert_type: str) -> bool:
     except Exception as e:
         logger.error(f"DB error in was_alert_sent_today: {e}")
         return False
+
+
+def get_alert_sent_at_today(deal_id: str, alert_type: str) -> "datetime | None":
+    """Debug helper: returns the casey_sent_alerts.sent_at timestamp behind
+    was_alert_sent_today(), or None if no matching row exists for today."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if not _db_available:
+        times = [t for t in _memory_store.get((deal_id, alert_type), []) if t >= today_start]
+        return max(times) if times else None
+
+    try:
+        with _Session() as session:
+            row = (
+                session.query(CaseySentAlert)
+                .filter(
+                    CaseySentAlert.deal_id == deal_id,
+                    CaseySentAlert.alert_type == alert_type,
+                    CaseySentAlert.sent_at >= today_start,
+                )
+                .first()
+            )
+            return row.sent_at if row else None
+    except Exception as e:
+        logger.error(f"DB error in get_alert_sent_at_today: {e}")
+        return None
 
 
 def was_escalation_sent_recently(deal_id: str, days: int = 3) -> bool:

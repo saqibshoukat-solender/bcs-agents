@@ -151,9 +151,13 @@ Return ONLY the JSON, no markdown backticks, no other text."""
         text = text.replace("```json", "").replace("```", "").strip()
         result = json.loads(text)
         logger.info(f"Email composed [{scenario}] for {customer_name} by {pm_name}: subject='{result.get('subject','')}'")
-        return result
     except Exception as e:
-        logger.error(f"Anthropic email composition failed [{scenario}]: {e}")
+        response_body = ""
+        try:
+            response_body = e.response.text
+        except Exception:
+            pass
+        logger.error(f"Anthropic email composition failed [{scenario}]: {e} — Response: {response_body}")
         first_name = customer_name.split()[0] if customer_name else customer_name
         if scenario == "invoice_reminder" and to_collect:
             body = (
@@ -189,7 +193,12 @@ Return ONLY the JSON, no markdown backticks, no other text."""
                 f"informed every step of the way. Please don't hesitate to reach out with any questions.</p>"
                 f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"
             )
-        return {
-            "subject": f"Project Update — Blue Collar Scholars",
+        result = {
+            "subject": "Project Update — Blue Collar Scholars",
             "body_html": body,
         }
+
+    # Label every Casey-sent email so OCA's Gmail history fetch can exclude
+    # these automated updates and only see genuine PM-to-customer emails.
+    result["subject"] = f"[BCS Update] {result.get('subject', '')}".strip()
+    return result

@@ -520,7 +520,7 @@ def _run() -> None:
     summary   = get_active_flags_summary()
     first_run = is_first_run_today()
     if first_run:
-        send_daily_digest(summary, slack_client, sam_slack_id, hs_sync_summary)
+        send_daily_digest(summary, slack_client, sam_slack_id)
 
     if datetime.now().weekday() == 0 and first_run:
         weekly = get_weekly_summary()

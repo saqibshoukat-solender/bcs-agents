@@ -21,6 +21,7 @@ from db.state_store import (
     set_escalation,
     get_summary,
     was_alert_sent_today,
+    get_alert_sent_at_today,
     was_escalation_sent_recently,
     record_alert_sent,
     get_config,
@@ -99,15 +100,6 @@ def _determine_scenario(job: dict) -> str:
     qb_status = job.get("qb_invoice_status")
     if qb_status and qb_status.get("days_overdue", 0) >= 60:
         return "invoice_reminder"
-
-    # Fall back to sheet balance check
-    to_collect = job.get("to_collect", "").replace("$", "").replace(",", "").strip()
-    if to_collect:
-        try:
-            if float(to_collect) > 0:
-                return "invoice_reminder"
-        except ValueError:
-            pass
 
     if job.get("assigned_crew_sub", "").strip():
         return "in_progress"
@@ -356,6 +348,7 @@ def _run():
     emails_sent = 0
     escalations = 0
     skipped = 0
+    no_invoice_found: list[str] = []
 
     for job in due_jobs:
         client_name = job["client_name"]
@@ -378,22 +371,14 @@ def _run():
         days_since_contact = calculate_days_since(contact_date)
 
         # ── QB invoice status + scenario (computed before escalation checks) ──
-        job["qb_invoice_status"] = get_invoice_status_for_customer(job["client_name"])
+        qb_status = get_invoice_status_for_customer(job["client_name"])
+        job["qb_invoice_status"] = qb_status
+        if not qb_status or not qb_status.get("found"):
+            no_invoice_found.append(client_name)
         scenario = _determine_scenario(job)
 
-        # ── New-job intro: first time Casey has ever processed this job ────────
-        if job.get("last_customer_update_sent") is None and job.get("next_scheduled_update") is None:
-            deposit_date = parse_latest_date(job.get("deposit_date", ""))
-            days_since_deposit = (date.today() - deposit_date).days if deposit_date else None
-            if days_since_deposit is not None and 0 <= days_since_deposit <= 14:
-                scenario = "new_job_intro"
-            else:
-                set_next_scheduled_update(client_name, pm_name, date.today() + timedelta(days=7))
-                logger.info(f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
-                skipped += 1
-                continue
-
-        # ── Escalation checks ────────────────────────────────────────────────
+        # ── Escalation checks (run first, even for never-processed jobs — a
+        # newly onboarded job that's already stale must still escalate) ───────
         escalation_reason = None
         if days_since_contact is not None and days_since_contact >= 14:
             escalation_reason = f"No PM contact in {days_since_contact} days"
@@ -415,7 +400,26 @@ def _run():
                 escalations += 1
             continue
 
+        # ── New-job intro: first time Casey has ever processed this job ────────
+        if job.get("last_customer_update_sent") is None and job.get("next_scheduled_update") is None:
+            deposit_date = parse_latest_date(job.get("deposit_date", ""))
+            days_since_deposit = (date.today() - deposit_date).days if deposit_date else None
+            if days_since_deposit is not None and 0 <= days_since_deposit <= 14:
+                scenario = "new_job_intro"
+            else:
+                set_next_scheduled_update(client_name, pm_name, date.today() + timedelta(days=7))
+                logger.info(f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
+                skipped += 1
+                continue
+
         # ── Email send ────────────────────────────────────────────────────
+        sent_at_today = get_alert_sent_at_today(job_id, "update_due")
+        logger.info(
+            f"Idempotency check for {client_name}: "
+            f"casey_sent_alerts.update_due sent_at_today={sent_at_today}, "
+            f"casey_active_jobs.last_customer_update_sent={job.get('last_customer_update_sent')}, "
+            f"today={date.today()}"
+        )
         if was_alert_sent_today(job_id, "update_due"):
             logger.info(f"SKIP update_due already sent today {job_id}")
             skipped += 1
@@ -489,6 +493,11 @@ def _run():
         f"Skipped: {skipped}\n"
         f"Up to date: {summary['up_to_date']}"
     )
+    if no_invoice_found:
+        summary_msg += (
+            f"\n\n📋 No QB invoice found for: {', '.join(no_invoice_found)}\n"
+            f"(These customers may not have an invoice in QuickBooks yet — no action needed)"
+        )
     send_message(SLACK_DAILY_CHANNEL, summary_msg)
     logger.info("Casey run complete")
 

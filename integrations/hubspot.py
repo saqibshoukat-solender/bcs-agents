@@ -548,17 +548,49 @@ def find_deal_for_job(
         if clean_phone:
             contact_id = search_contact_by_phone(clean_phone)
 
-    # Layer 2c: if a contact was found, match their deals by job type
+    # Layer 2c: if a contact was found, match one of their deals. Any deal the
+    # contact is genuinely associated with should be used — job_type match is
+    # a preference for picking the right one among several, not a hard
+    # requirement. Falling through to Layer 3 only happens when the contact
+    # has zero deals at all.
     if contact_id:
         deals = get_deals_for_contact(contact_id)
-        for deal in deals:
-            deal_name = deal.get("properties", {}).get("dealname", "")
-            if job_type and job_type.lower()[:15] in deal_name.lower():
-                logger.info(f"Matched deal by contact+job_type for {client_name} / {job_type}: {deal['id']}")
-                return deal["id"], "contact"
-        logger.warning(
-            f"Contact found for {client_name} but no deal matched job type '{job_type}' — falling through to name search"
-        )
+        if deals:
+            # Priority 1: exact job type match
+            job_type_match = None
+            if job_type:
+                job_type_key = job_type.lower()[:15]
+                for deal in deals:
+                    deal_name = deal.get("properties", {}).get("dealname", "")
+                    if job_type_key in deal_name.lower():
+                        job_type_match = deal
+                        break
+
+            if job_type_match:
+                logger.info(f"Matched deal by contact+job_type for {client_name}: {job_type_match['id']}")
+                return job_type_match["id"], "contact"
+
+            # Priority 2: exactly one deal associated with this contact
+            if len(deals) == 1:
+                logger.info(f"Single deal for contact {client_name}, using it directly: {deals[0]['id']}")
+                return deals[0]["id"], "contact"
+
+            # Priority 3: deal name contains the client's first or last name
+            name_parts = client_name.strip().split(None, 1)
+            first_name = name_parts[0].lower() if name_parts else ""
+            last_name = name_parts[1].lower() if len(name_parts) > 1 else ""
+            for deal in deals:
+                deal_name = deal.get("properties", {}).get("dealname", "").lower()
+                if (first_name and first_name in deal_name) or (last_name and last_name in deal_name):
+                    logger.info(f"Matched deal by client name for {client_name}: {deal['id']}")
+                    return deal["id"], "contact"
+
+            # Priority 4: most recently created deal (highest deal ID)
+            most_recent = max(deals, key=lambda d: int(d["id"]))
+            logger.info(f"No name match for {client_name}, using most recent deal: {most_recent['id']}")
+            return most_recent["id"], "contact"
+
+        logger.warning(f"Contact found but no deal matched for {client_name} — falling through to name search")
 
     # Layer 3: deal-name search by client name, filtered by job type
     deals = search_deals_by_client_name(client_name)
