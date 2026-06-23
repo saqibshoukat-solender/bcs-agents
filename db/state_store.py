@@ -135,6 +135,7 @@ if _db_available:
         finished_at = Column(DateTime, nullable=True)
         status      = Column(String)          # running / success / error
         log         = Column(Text, nullable=True)
+        summary     = Column(String, nullable=True)  # one-line summary, e.g. "10 emails sent, 2 escalations"
 
 
 # --- In-memory fallback stores ---
@@ -198,6 +199,7 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS sheet_tab VARCHAR"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS pm_communication_history TEXT"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS deadline_to_start VARCHAR"))
+            conn.execute(text("ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS summary VARCHAR"))
             conn.commit()
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
@@ -422,7 +424,7 @@ def append_agent_run_log(run_id: int, lines: str) -> None:
         logger.error(f"append_agent_run_log: {e}")
 
 
-def finish_agent_run(run_id: int, status: str) -> None:
+def finish_agent_run(run_id: int, status: str, summary: str = "") -> None:
     if not _db_available or run_id < 0:
         return
     try:
@@ -431,9 +433,30 @@ def finish_agent_run(run_id: int, status: str) -> None:
             if run:
                 run.status = status
                 run.finished_at = datetime.utcnow()
+                if summary:
+                    run.summary = summary
                 s.commit()
     except Exception as e:
         logger.error(f"finish_agent_run: {e}")
+
+
+def set_agent_run_summary(run_id: int, summary: str) -> None:
+    """Set the one-line summary on a run without touching status/finished_at.
+
+    Used when a run's lifecycle (status/finished_at) is owned by something
+    else — e.g. the dashboard's subprocess wrapper — but the run itself still
+    wants to record what it did.
+    """
+    if not _db_available or run_id < 0:
+        return
+    try:
+        with _Session() as s:
+            run = s.query(AgentRun).filter_by(id=run_id).first()
+            if run:
+                run.summary = summary
+                s.commit()
+    except Exception as e:
+        logger.error(f"set_agent_run_summary: {e}")
 
 
 def get_agent_run(run_id: int) -> "dict | None":
@@ -447,6 +470,7 @@ def get_agent_run(run_id: int) -> "dict | None":
             return {
                 "id": r.id, "agent": r.agent, "status": r.status,
                 "log": r.log or "", "started_at": r.started_at, "finished_at": r.finished_at,
+                "summary": r.summary or "",
             }
     except Exception as e:
         logger.error(f"get_agent_run: {e}")
@@ -464,10 +488,34 @@ def get_last_agent_run(agent: str) -> "dict | None":
             return {
                 "id": r.id, "agent": r.agent, "status": r.status,
                 "log": r.log or "", "started_at": r.started_at, "finished_at": r.finished_at,
+                "summary": r.summary or "",
             }
     except Exception as e:
         logger.error(f"get_last_agent_run: {e}")
         return None
+
+
+def get_run_logs(agent: "str | None" = None, limit: int = 50) -> list[dict]:
+    """Return the most recent agent runs (any/both agents), newest first."""
+    if not _db_available:
+        return []
+    try:
+        with _Session() as s:
+            q = s.query(AgentRun)
+            if agent:
+                q = q.filter_by(agent=agent)
+            rows = q.order_by(AgentRun.id.desc()).limit(limit).all()
+            return [
+                {
+                    "id": r.id, "agent": r.agent, "status": r.status,
+                    "log": r.log or "", "started_at": r.started_at, "finished_at": r.finished_at,
+                    "summary": r.summary or "",
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error(f"get_run_logs: {e}")
+        return []
 
 
 # --- Casey active jobs ---

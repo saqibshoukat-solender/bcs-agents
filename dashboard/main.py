@@ -14,10 +14,12 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 from dashboard.routes.jobs import router as jobs_router
 from dashboard.routes.config import router as config_router
 from dashboard.routes.agents import router as agents_router
+from dashboard.routes.runs import router as runs_router
 
 app.include_router(jobs_router)
 app.include_router(config_router)
 app.include_router(agents_router)
+app.include_router(runs_router)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -53,7 +55,12 @@ async def dashboard_home(request: Request):
         ts = run.get("started_at")
         if ts:
             ts = ts.strftime("%b %d, %Y at %I:%M %p") if hasattr(ts, "strftime") else str(ts)
-        return {"date": ts or "Never", "status": run.get("status", ""), "id": run.get("id")}
+        return {
+            "date": ts or "Never",
+            "status": run.get("status", ""),
+            "id": run.get("id"),
+            "summary": run.get("summary") or "",
+        }
 
     casey_run = _fmt_run(get_last_agent_run("casey"))
     oca_run   = _fmt_run(get_last_agent_run("oca"))

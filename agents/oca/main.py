@@ -1,3 +1,4 @@
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -42,6 +43,10 @@ from db.state_store import (
     get_email_history,
     upsert_email_history,
     should_fetch_email_history,
+    create_agent_run,
+    append_agent_run_log,
+    finish_agent_run,
+    set_agent_run_summary,
 )
 from integrations.slack import send_dm
 from integrations.sheets import get_active_jobs, parse_latest_date
@@ -377,11 +382,31 @@ def _build_contact_date_map(sheet_jobs: list) -> dict:
     return contact_map
 
 
+def _checkpoint(run_id: "int | None", line: str) -> None:
+    """Append a key log line to this run's agent_runs record, if one exists."""
+    if run_id is not None:
+        append_agent_run_log(run_id, line + "\n")
+
+
 def run() -> None:
+    # AGENT_RUN_ID is set by the dashboard when it spawns this as a subprocess
+    # (it already created the row and owns the live SSE log stream + final
+    # status/finished_at) — reuse that row instead of creating a second one.
+    # Cron/CLI invocations have no such env var, so they create their own.
+    external_run_id = os.getenv("AGENT_RUN_ID")
+    own_run = external_run_id is None
+    run_id = int(external_run_id) if external_run_id else create_agent_run("oca")
+
     try:
-        _run()
+        summary = _run(run_id)
+        set_agent_run_summary(run_id, summary)
+        if own_run:
+            finish_agent_run(run_id, "success", summary)
     except Exception as e:
         logger.exception("OCA crashed")
+        set_agent_run_summary(run_id, f"Error: {e}")
+        if own_run:
+            finish_agent_run(run_id, "error", f"Error: {e}")
         try:
             josh_id = cfg("slack_josh_user_id")
             if josh_id:
@@ -397,16 +422,16 @@ def run() -> None:
         raise
 
 
-def _run() -> None:
+def _run(run_id: "int | None" = None) -> str:
     if not cfg("slack_bot_token"):
         logger.error("OCA: slack_bot_token not configured in DB — aborting")
-        return
+        return "Aborted: slack_bot_token not configured"
     if not cfg("google_sheets_id"):
         logger.error("OCA: google_sheets_id not configured in DB — aborting")
-        return
+        return "Aborted: google_sheets_id not configured"
     if not cfg("hubspot_access_token"):
         logger.error("OCA: hubspot_access_token not configured in DB — aborting")
-        return
+        return "Aborted: hubspot_access_token not configured"
 
     logger.info("OCA starting run")
     init_db()
@@ -422,13 +447,20 @@ def _run() -> None:
     sheet_jobs = get_active_jobs()
     if not sheet_jobs:
         logger.error("OCA: No sheet jobs loaded — aborting")
-        return
+        return "Aborted: no sheet jobs loaded"
 
     hs_deals = get_open_deals()
     logger.info(f"OCA loaded {len(sheet_jobs)} sheet jobs, {len(hs_deals)} HubSpot deals")
+    _checkpoint(run_id, f"OCA loaded {len(sheet_jobs)} sheet jobs, {len(hs_deals)} HubSpot deals")
 
     # ── Step 2: Sync — keep Sheet, HubSpot, and local DB aligned ────────────
     hs_sync_summary = _sync_all(sheet_jobs, hs_deals, slack_client, josh_slack_id)
+    _checkpoint(
+        run_id,
+        f"HubSpot sync: matched by contact {hs_sync_summary.get('matched_contact', 0)}, "
+        f"matched by name {hs_sync_summary.get('matched_name', 0)}, "
+        f"not found {hs_sync_summary.get('not_found', 0)}",
+    )
 
     # ── Step 2b: Gmail-based PM↔customer contact history ────────────────────
     _fetch_email_histories(sheet_jobs, pm_config, slack_client, josh_slack_id)
@@ -444,15 +476,30 @@ def _run() -> None:
     db_jobs = {j["client_name"]: j for j in get_all_active_jobs()}
 
     # ── Step 3: Run checks ───────────────────────────────────────────────────
+    stale_flags       = check_stale_records(sheet_jobs, contact_date_map)
+    missing_pm_flags  = check_missing_pm(sheet_jobs, contact_date_map)
+    crew_flags        = check_unconfirmed_crew(sheet_jobs, contact_date_map)
+    invoice_flags     = check_dropped_invoices(sheet_jobs, contact_date_map)
+    readiness_flags   = check_job_readiness(sheet_jobs, hs_deals, db_jobs, contact_date_map)
+    deal_not_found_flags = hs_sync_summary.get("deal_not_found_flags", [])
+
+    _checkpoint(
+        run_id,
+        f"Checks: stale_record={len(stale_flags)}, missing_pm={len(missing_pm_flags)}, "
+        f"unconfirmed_crew={len(crew_flags)}, dropped_invoice={len(invoice_flags)}, "
+        f"readiness_sync={len(readiness_flags)}, deal_not_found={len(deal_not_found_flags)}",
+    )
+
     all_flags: list[dict] = []
-    all_flags.extend(check_stale_records(sheet_jobs, contact_date_map))
-    all_flags.extend(check_missing_pm(sheet_jobs, contact_date_map))
-    all_flags.extend(check_unconfirmed_crew(sheet_jobs, contact_date_map))
-    all_flags.extend(check_dropped_invoices(sheet_jobs, contact_date_map))
-    all_flags.extend(check_job_readiness(sheet_jobs, hs_deals, db_jobs, contact_date_map))
-    all_flags.extend(hs_sync_summary.get("deal_not_found_flags", []))
+    all_flags.extend(stale_flags)
+    all_flags.extend(missing_pm_flags)
+    all_flags.extend(crew_flags)
+    all_flags.extend(invoice_flags)
+    all_flags.extend(readiness_flags)
+    all_flags.extend(deal_not_found_flags)
 
     logger.info(f"OCA detected {len(all_flags)} flags total")
+    _checkpoint(run_id, f"OCA detected {len(all_flags)} flags total")
 
     # ── Step 4: Process flags with deduplication + cooldown ─────────────────
     alerted = 0
@@ -527,6 +574,10 @@ def _run() -> None:
         send_weekly_summary(weekly, slack_client, josh_slack_id)
 
     logger.info(f"OCA run complete — alerted: {alerted}, suppressed: {suppressed}")
+
+    run_summary = f"{len(all_flags)} flags detected, {alerted} alerted, {suppressed} suppressed"
+    _checkpoint(run_id, f"OCA run complete — {run_summary}")
+    return run_summary
 
 
 def _write_flag_to_hubspot(flag: dict, db_job: dict) -> None:

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import sys
 import threading
@@ -14,6 +15,10 @@ router = APIRouter()
 
 def _run_agent_thread(agent: str, run_id: int) -> None:
     cmd = [sys.executable, "-m", f"agents.{agent}.main"]
+    # Tell the subprocess which agent_runs row already exists for this run, so
+    # it appends its own checkpoint log lines to it (used by the Run History
+    # page) instead of creating a second, duplicate row.
+    env = {**os.environ, "AGENT_RUN_ID": str(run_id)}
     try:
         proc = subprocess.Popen(
             cmd,
@@ -21,6 +26,7 @@ def _run_agent_thread(agent: str, run_id: int) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
         buf = []
         for line in proc.stdout:

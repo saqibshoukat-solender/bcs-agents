@@ -26,6 +26,10 @@ from db.state_store import (
     record_alert_sent,
     get_config,
     get_email_history,
+    create_agent_run,
+    append_agent_run_log,
+    finish_agent_run,
+    set_agent_run_summary,
 )
 from utils.logger import get_logger
 from config.loader import cfg
@@ -241,11 +245,35 @@ def _write_escalation_to_hubspot(job: dict, reason: str) -> None:
     })
 
 
+def _checkpoint(run_id: "int | None", line: str) -> None:
+    """Append a key log line to this run's agent_runs record, if one exists.
+
+    `run_id` is None when nothing is tracking this run via the run-log table
+    (shouldn't normally happen — run() always creates or reuses one).
+    """
+    if run_id is not None:
+        append_agent_run_log(run_id, line + "\n")
+
+
 def run() -> None:
+    # AGENT_RUN_ID is set by the dashboard when it spawns this as a subprocess
+    # (it already created the row and owns the live SSE log stream + final
+    # status/finished_at) — reuse that row instead of creating a second one.
+    # Cron/CLI invocations have no such env var, so they create their own.
+    external_run_id = os.getenv("AGENT_RUN_ID")
+    own_run = external_run_id is None
+    run_id = int(external_run_id) if external_run_id else create_agent_run("casey")
+
     try:
-        _run()
+        summary = _run(run_id)
+        set_agent_run_summary(run_id, summary)
+        if own_run:
+            finish_agent_run(run_id, "success", summary)
     except Exception as e:
         logger.exception("Casey crashed")
+        set_agent_run_summary(run_id, f"Error: {e}")
+        if own_run:
+            finish_agent_run(run_id, "error", f"Error: {e}")
         try:
             josh_id = cfg("slack_josh_user_id")
             if josh_id:
@@ -261,13 +289,13 @@ def run() -> None:
         raise
 
 
-def _run():
+def _run(run_id: "int | None" = None) -> str:
     if not cfg("slack_bot_token"):
         logger.error("Casey: slack_bot_token not configured in DB — aborting")
-        return
+        return "Aborted: slack_bot_token not configured"
     if not cfg("google_sheets_id"):
         logger.error("Casey: google_sheets_id not configured in DB — aborting")
-        return
+        return "Aborted: google_sheets_id not configured"
 
     JOSH_SLACK_USER_ID  = cfg("slack_josh_user_id")
     SLACK_DAILY_CHANNEL = cfg("slack_casey_channel") or "casey-daily"
@@ -281,9 +309,10 @@ def _run():
         sheet_jobs = get_active_jobs()
         if not sheet_jobs:
             logger.error("No active jobs loaded from Google Sheet — aborting")
-            return
+            return "Aborted: no active jobs loaded from sheet"
 
     logger.info(f"Sheet: {len(sheet_jobs)} active jobs loaded")
+    _checkpoint(run_id, f"Sheet: {len(sheet_jobs)} active jobs loaded")
 
     try:
         from integrations.hubspot import get_all_owners, search_deals_by_client_name, get_contact_email_for_deal
@@ -340,6 +369,7 @@ def _run():
         synced += 1
 
     logger.info(f"Synced {synced} jobs to database")
+    _checkpoint(run_id, f"HubSpot sync: {synced} jobs synced to database")
 
     # ── Step 2: Process jobs due for email ───────────────────────────────────
     due_jobs = get_jobs_due_for_update()
@@ -358,12 +388,14 @@ def _run():
         # Idempotency: skip if already emailed today
         if _idempotent_skip(job):
             logger.info(f"SKIP {job_id} — already emailed today")
+            _checkpoint(run_id, f"SKIP {job_id} — already emailed today")
             skipped += 1
             continue
 
         customer_email = job.get("customer_email", "").strip()
         if not customer_email:
             logger.info(f"SKIP {job_id} — no customer email")
+            _checkpoint(run_id, f"SKIP {job_id} — no customer email")
             skipped += 1
             continue
 
@@ -388,6 +420,7 @@ def _run():
         if escalation_reason:
             if was_escalation_sent_recently(job_id, days=3):
                 logger.info(f"SKIP escalation {job_id} — sent in last 3 days")
+                _checkpoint(run_id, f"SKIP escalation {job_id} — sent in last 3 days")
                 skipped += 1
             else:
                 set_escalation(client_name, pm_name, escalation_reason)
@@ -397,6 +430,7 @@ def _run():
                 record_alert_sent(job_id, "escalation", client_name)
                 _write_escalation_to_hubspot(job, escalation_reason)
                 logger.info(f"ESCALATION {job_id} reason={escalation_reason}")
+                _checkpoint(run_id, f"ESCALATION {job_id} reason={escalation_reason}")
                 escalations += 1
             continue
 
@@ -409,6 +443,7 @@ def _run():
             else:
                 set_next_scheduled_update(client_name, pm_name, date.today() + timedelta(days=7))
                 logger.info(f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
+                _checkpoint(run_id, f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
                 skipped += 1
                 continue
 
@@ -422,12 +457,14 @@ def _run():
         )
         if was_alert_sent_today(job_id, "update_due"):
             logger.info(f"SKIP update_due already sent today {job_id}")
+            _checkpoint(run_id, f"SKIP update_due already sent today {job_id}")
             skipped += 1
             continue
 
         pm_email = _get_pm_email(pm_name) if pm_name else ""
         if not pm_email:
             logger.warning(f"SKIP {job_id} — PM {pm_name!r} has no email in pm_config")
+            _checkpoint(run_id, f"SKIP {job_id} — PM {pm_name!r} has no email in pm_config")
             skipped += 1
             continue
 
@@ -473,9 +510,11 @@ def _run():
             record_alert_sent(job_id, "update_due", client_name)
             _write_email_to_hubspot(job, scenario, subject, next_update_date=next_update)
             logger.info(f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
+            _checkpoint(run_id, f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
             emails_sent += 1
         else:
             logger.error(f"EMAIL FAILED {job_id} → {customer_email}")
+            _checkpoint(run_id, f"ERROR: EMAIL FAILED {job_id} → {customer_email}")
 
     # ── Step 3: Daily summary ────────────────────────────────────────────────
     summary = get_summary()
@@ -500,6 +539,10 @@ def _run():
         )
     send_message(SLACK_DAILY_CHANNEL, summary_msg)
     logger.info("Casey run complete")
+
+    run_summary = f"{emails_sent} emails sent, {escalations} escalations, {skipped} skipped"
+    _checkpoint(run_id, f"Casey run complete — {run_summary}")
+    return run_summary
 
 
 if __name__ == "__main__":

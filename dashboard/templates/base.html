@@ -80,6 +80,17 @@
         </div>
       </div>
 
+      <!-- Run History -->
+      <a href="/runs"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+          {% if page == 'runs' %}bg-blue-600 text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Run History
+      </a>
+
       <!-- Configurations section -->
       <div>
         <button onclick="toggleSection('config-sub')"
