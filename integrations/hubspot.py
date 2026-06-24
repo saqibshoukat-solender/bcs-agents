@@ -45,10 +45,12 @@ _owner_cache: dict[str, str] = {}
 
 # Circuit breaker: set True on any 5xx response, blocks further writes for this run
 _hs_circuit_open: bool = False
+# Auth failure flag: set True on 401, blocks all HubSpot calls for this run
+_hs_auth_failed: bool = False
 
 
 def hs_available() -> bool:
-    return not _hs_circuit_open
+    return not _hs_circuit_open and not _hs_auth_failed
 
 
 def _trip_circuit(context: str) -> None:
@@ -56,6 +58,16 @@ def _trip_circuit(context: str) -> None:
     if not _hs_circuit_open:
         logger.error(f"HubSpot circuit breaker OPEN — skipping all further HS writes ({context})")
     _hs_circuit_open = True
+
+
+def _trip_auth_failure() -> None:
+    global _hs_auth_failed
+    if not _hs_auth_failed:
+        logger.error(
+            "HubSpot authentication failed — skipping all HubSpot operations this run. "
+            "Check token in dashboard config."
+        )
+    _hs_auth_failed = True
 
 
 def _headers() -> dict[str, str]:
@@ -69,6 +81,9 @@ def _load_owners() -> None:
     url = "https://api.hubapi.com/crm/v3/owners?limit=100"
     try:
         response = requests.get(url, headers=_headers(), timeout=10)
+        if response.status_code == 401:
+            _trip_auth_failure()
+            return
         response.raise_for_status()
         for o in response.json().get("results", []):
             owner_id = str(o.get("id", ""))
@@ -98,6 +113,9 @@ def _search_deals(filter_groups: list[dict], label: str = "") -> list[dict[str, 
 
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=15)
+            if response.status_code == 401:
+                _trip_auth_failure()
+                break
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
@@ -137,6 +155,9 @@ def search_deal_by_exact_name(deal_name: str) -> "str | None":
     try:
         resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
                              json=payload, timeout=10)
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code >= 500:
             _trip_circuit(f"search_deal_by_exact_name {deal_name[:40]}")
             return None
@@ -164,6 +185,9 @@ def get_all_deals_paginated(properties: "list[str] | None" = None) -> list[dict[
             params["after"] = after
         try:
             resp = requests.get(url, headers=_headers(), params=params, timeout=15)
+            if resp.status_code == 401:
+                _trip_auth_failure()
+                break
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as e:
@@ -245,6 +269,9 @@ def get_deal_contact(deal_id: str) -> dict[str, Any] | None:
     assoc_url = f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}/associations/contacts"
     try:
         assoc_resp = requests.get(assoc_url, headers=_headers(), timeout=10)
+        if assoc_resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         assoc_resp.raise_for_status()
         results = assoc_resp.json().get("results", [])
         if not results:
@@ -257,6 +284,9 @@ def get_deal_contact(deal_id: str) -> dict[str, Any] | None:
             "?properties=firstname,lastname,email,phone"
         )
         contact_resp = requests.get(contact_url, headers=_headers(), timeout=10)
+        if contact_resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         contact_resp.raise_for_status()
         props = contact_resp.json().get("properties", {})
 
@@ -291,6 +321,9 @@ def get_deal_stages() -> dict[str, str]:
         url = f"https://api.hubapi.com/crm/v3/pipelines/deals/{pipeline_id}"
         try:
             response = requests.get(url, headers=_headers(), timeout=10)
+            if response.status_code == 401:
+                _trip_auth_failure()
+                break
             response.raise_for_status()
             for s in response.json().get("stages", []):
                 stage_map[s["id"]] = s["label"]
@@ -338,6 +371,9 @@ def search_deals_by_client_name(client_name: str) -> list[dict[str, Any]]:
     }
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
+        if response.status_code == 401:
+            _trip_auth_failure()
+            return []
         response.raise_for_status()
         results = response.json().get("results", [])
         deals = [{"id": d["id"], "properties": d.get("properties", {})} for d in results]
@@ -385,6 +421,9 @@ def create_deal(
             json={"properties": props},
             timeout=15,
         )
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code >= 500:
             _trip_circuit(f"create_deal {dealname}")
             return None
@@ -410,6 +449,9 @@ def search_contact_by_email(email: str) -> "str | None":
     try:
         resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
                              json=payload, timeout=10)
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code >= 500:
             _trip_circuit(f"search_contact_by_email {email}")
             return None
@@ -435,6 +477,9 @@ def search_contact_by_name(first_name: str, last_name: str = "") -> "str | None"
     try:
         resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
                              json=payload, timeout=10)
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code >= 500:
             _trip_circuit(f"search_contact_by_name {first_name}")
             return None
@@ -464,6 +509,9 @@ def search_contact_by_phone(phone_digits: str) -> "str | None":
         try:
             resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
                                   json=payload, timeout=10)
+            if resp.status_code == 401:
+                _trip_auth_failure()
+                return None
             if resp.status_code >= 500:
                 _trip_circuit(f"search_contact_by_phone {phone_digits}")
                 return None
@@ -486,6 +534,9 @@ def get_deals_for_contact(contact_id: str) -> list[dict[str, Any]]:
             headers=_headers(),
             timeout=10,
         )
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return []
         if resp.status_code >= 500:
             _trip_circuit(f"get_deals_for_contact {contact_id}")
             return []
@@ -507,6 +558,9 @@ def get_deals_for_contact(contact_id: str) -> list[dict[str, Any]]:
                 params={"properties": "dealname,dealstage"},
                 timeout=10,
             )
+            if deal_resp.status_code == 401:
+                _trip_auth_failure()
+                return deals
             deal_resp.raise_for_status()
             data = deal_resp.json()
             deals.append({"id": str(data.get("id")), "properties": data.get("properties", {})})
@@ -622,6 +676,9 @@ def create_contact(firstname: str, lastname: str = "", email: str = "", phone: s
             json={"properties": props},
             timeout=10,
         )
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code == 409:
             # Duplicate — extract existing contact ID from error body
             existing_id = resp.json().get("message", "").split("Existing ID: ")
@@ -650,6 +707,9 @@ def associate_contact_to_deal(contact_id: str, deal_id: str) -> bool:
     )
     try:
         resp = requests.put(url, headers=_headers(), timeout=10)
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return False
         if resp.status_code >= 500:
             _trip_circuit(f"associate_contact deal={deal_id} contact={contact_id}")
             return False
@@ -674,6 +734,9 @@ def update_deal_properties(deal_id: str, properties: dict) -> bool:
             json={"properties": properties},
             timeout=10,
         )
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return False
         if resp.status_code == 400:
             # Property names don't exist in HubSpot yet — warn, don't error
             try:
@@ -719,6 +782,9 @@ def create_note_on_deal(deal_id: str, note_body: str) -> "str | None":
             json=payload,
             timeout=10,
         )
+        if resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         if resp.status_code >= 500:
             _trip_circuit(f"create_note_on_deal deal={deal_id}")
             return None
@@ -757,6 +823,9 @@ def get_contact_email_for_deal(deal_id: str) -> str | None:
     assoc_url = f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}/associations/contacts"
     try:
         assoc_resp = requests.get(assoc_url, headers=_headers(), timeout=10)
+        if assoc_resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         assoc_resp.raise_for_status()
         results = assoc_resp.json().get("results", [])
         if not results:
@@ -767,6 +836,9 @@ def get_contact_email_for_deal(deal_id: str) -> str | None:
             "?properties=email"
         )
         contact_resp = requests.get(contact_url, headers=_headers(), timeout=10)
+        if contact_resp.status_code == 401:
+            _trip_auth_failure()
+            return None
         contact_resp.raise_for_status()
         return contact_resp.json().get("properties", {}).get("email") or None
     except requests.RequestException as e:

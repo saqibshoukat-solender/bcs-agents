@@ -57,10 +57,8 @@ from integrations.hubspot import (
     find_deal_for_job,
     search_contact_by_email,
     search_contact_by_name,
-    create_contact,
     associate_contact_to_deal,
     update_deal_properties,
-    create_note_on_deal,
 )
 from utils.logger import get_logger
 from config.loader import cfg
@@ -78,16 +76,10 @@ _ALL_FLAG_TYPES = [
 
 
 def _get_hs_custom_field_map() -> dict:
-    """Returns {job_dict_key: hs_property_internal_name} from DB config.
-    These are the 6 fields that OCA writes back to HubSpot deals on every sync.
-    """
+    """Returns {job_dict_key: hs_property_internal_name} for the two fields OCA writes to HubSpot deals."""
     keys = [
-        ("pm_name",                   "hubspot_field_pm_name"),
-        ("assigned_crew_sub",         "hubspot_field_crew_confirmed"),
-        ("last_customer_update_sent", "hubspot_field_last_update_sent"),
-        ("next_scheduled_update",     "hubspot_field_next_update"),
-        ("escalation_flag",           "hubspot_field_escalation_flag"),
-        ("escalation_reason",         "hubspot_field_escalation_reason"),
+        ("pm_name",       "hubspot_field_pm_name"),
+        ("assigned_crew_sub", "hubspot_field_crew_confirmed"),
     ]
     result = {}
     for field_key, config_key in keys:
@@ -128,7 +120,6 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
     custom_field_map = _get_hs_custom_field_map()
 
     synced = 0
-    created_contacts = 0
     matched_by_contact = 0
     matched_by_name = 0
     not_found = 0
@@ -176,6 +167,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
                     matched_by_name += 1
             else:
                 not_found += 1
+                logger.warning(f"OCA: no deal found for {client_name} — skipping HubSpot write")
                 flag = _flag(
                     client_name, pm_name, "deal_not_found",
                     "Job exists in sheet but no HubSpot deal found. Check that customer "
@@ -185,10 +177,9 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
                 flag["customer_email"] = email
                 deal_not_found_flags.append(flag)
 
-        # ── Contact Layer 2/3: search then create ────────────────────────────
+        # ── Contact search (read-only — OCA never creates contacts) ──────────
         if not hubspot_contact_id and hs_available():
             email = job.get("email", "").strip()
-            phone = job.get("customer_phone", "").strip()
             parts = client_name.strip().split(None, 1)
             first = parts[0] if parts else client_name
             last = parts[1] if len(parts) > 1 else ""
@@ -204,14 +195,6 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
                 logger.info(f"Found existing HubSpot contact for {client_name}: {hubspot_contact_id}")
                 set_hubspot_contact_id(client_name, pm_name, hubspot_contact_id)
                 contact_needs_association = True
-            else:
-                new_cid = create_contact(first, last, email, phone)
-                if new_cid:
-                    hubspot_contact_id = new_cid
-                    created_contacts += 1
-                    logger.info(f"Created HubSpot contact for {client_name}: {hubspot_contact_id}")
-                    set_hubspot_contact_id(client_name, pm_name, hubspot_contact_id)
-                    contact_needs_association = True
 
         # ── Associate contact ↔ deal whenever either side was newly resolved ─
         if hubspot_contact_id and hubspot_deal_id and contact_needs_association:
@@ -275,9 +258,8 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
     set_config("last_sync_at", datetime.utcnow().isoformat())
     logger.info(
         f"OCA sync complete — sheet jobs: {len(sheet_jobs)}, "
-        f"DB upserted: {synced}, HubSpot contacts created: {created_contacts}, "
-        f"matched by contact: {matched_by_contact}, matched by deal name: {matched_by_name}, "
-        f"not found: {not_found}, errors: {errors}"
+        f"DB upserted: {synced}, matched by contact: {matched_by_contact}, "
+        f"matched by deal name: {matched_by_name}, not found: {not_found}, errors: {errors}"
     )
     return {
         "matched_contact": matched_by_contact,
@@ -527,7 +509,6 @@ def _run(run_id: "int | None" = None) -> str:
                         if age_hours is not None and age_hours > 48:
                             escalate_unresolved_warning(flag, int(age_hours), slack_client, josh_slack_id)
                     update_flag_alerted(job_id, flag_type)
-                    _write_flag_to_hubspot(flag, db_jobs.get(client_name, {}))
                     active_flags.append(flag)
                     alerted += 1
                 else:
@@ -535,7 +516,6 @@ def _run(run_id: "int | None" = None) -> str:
                     suppressed += 1
             else:
                 create_flag(job_id, flag_type, flag.get("details", ""), flag.get("urgency", ""))
-                _write_flag_to_hubspot(flag, db_jobs.get(client_name, {}))
                 active_flags.append(flag)
                 alerted += 1
 
@@ -578,28 +558,6 @@ def _run(run_id: "int | None" = None) -> str:
     run_summary = f"{len(all_flags)} flags detected, {alerted} alerted, {suppressed} suppressed"
     _checkpoint(run_id, f"OCA run complete — {run_summary}")
     return run_summary
-
-
-def _write_flag_to_hubspot(flag: dict, db_job: dict) -> None:
-    """Write a HubSpot note for this flag on the associated deal."""
-    if not hs_available():
-        return
-    deal_id = db_job.get("hubspot_deal_id")
-    if not deal_id:
-        return
-    flag_type = flag.get("flag_type", "flag")
-    details   = flag.get("details", "")
-    urgency   = flag.get("urgency", "")
-    client_name = flag.get("client_name", "")
-    pm_name   = flag.get("pm_name", "")
-
-    note_body = (
-        f"OCA Flag [{flag_type.upper()}] — {urgency.upper()}\n"
-        f"Client: {client_name}\n"
-        f"PM: {pm_name}\n"
-        f"Details: {details}"
-    )
-    create_note_on_deal(deal_id, note_body)
 
 
 if __name__ == "__main__":
