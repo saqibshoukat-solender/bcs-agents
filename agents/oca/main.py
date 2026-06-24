@@ -3,8 +3,6 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from slack_sdk import WebClient
-
 from agents.oca.checks import (
     check_stale_records,
     check_missing_pm,
@@ -89,7 +87,7 @@ def _get_hs_custom_field_map() -> dict:
     return result
 
 
-def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str) -> dict:
+def _sync_all(sheet_jobs: list, hs_deals: list, josh_slack_id: str) -> dict:
     """
     OCA sync: keep Google Sheet, HubSpot, and local DB aligned.
 
@@ -219,7 +217,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
         if old_deadline and new_deadline and old_deadline != new_deadline:
             send_deadline_change_alert(
                 client_name, pm_name, old_deadline, new_deadline,
-                hubspot_deal_id, slack_client, josh_slack_id,
+                hubspot_deal_id, josh_slack_id,
             )
             logger.info(f"Deadline change: {client_name} {old_deadline} → {new_deadline}")
 
@@ -269,7 +267,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list, slack_client, josh_slack_id: str
     }
 
 
-def _fetch_email_histories(sheet_jobs: list, pm_config: list, slack_client, josh_slack_id: str) -> None:
+def _fetch_email_histories(sheet_jobs: list, pm_config: list, josh_slack_id: str) -> None:
     """
     Fetch and cache each job's PM→customer Gmail sent-history.
 
@@ -330,10 +328,10 @@ def _fetch_email_histories(sheet_jobs: list, pm_config: list, slack_client, josh
             if flag_exists(job_id, flag_type):
                 if should_alert_again(job_id, flag_type, cooldown_hours=24):
                     update_flag_alerted(job_id, flag_type)
-                    send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, slack_client, josh_slack_id)
+                    send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, josh_slack_id)
             else:
                 create_flag(job_id, flag_type, f"No emails found in {pm_email} sent folder to {customer_email}", "warning")
-                send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, slack_client, josh_slack_id)
+                send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, josh_slack_id)
 
 
 def _build_contact_date_map(sheet_jobs: list) -> dict:
@@ -423,7 +421,6 @@ def _run(run_id: "int | None" = None) -> str:
 
     josh_slack_id = cfg("slack_josh_user_id")
     sam_slack_id  = cfg("slack_sam_user_id")
-    slack_client  = WebClient(token=cfg("slack_bot_token"))
 
     # ── Step 1: Fetch latest data ────────────────────────────────────────────
     sheet_jobs = get_active_jobs()
@@ -436,7 +433,7 @@ def _run(run_id: "int | None" = None) -> str:
     _checkpoint(run_id, f"OCA loaded {len(sheet_jobs)} sheet jobs, {len(hs_deals)} HubSpot deals")
 
     # ── Step 2: Sync — keep Sheet, HubSpot, and local DB aligned ────────────
-    hs_sync_summary = _sync_all(sheet_jobs, hs_deals, slack_client, josh_slack_id)
+    hs_sync_summary = _sync_all(sheet_jobs, hs_deals, josh_slack_id)
     _checkpoint(
         run_id,
         f"HubSpot sync: matched by contact {hs_sync_summary.get('matched_contact', 0)}, "
@@ -445,7 +442,7 @@ def _run(run_id: "int | None" = None) -> str:
     )
 
     # ── Step 2b: Gmail-based PM↔customer contact history ────────────────────
-    _fetch_email_histories(sheet_jobs, pm_config, slack_client, josh_slack_id)
+    _fetch_email_histories(sheet_jobs, pm_config, josh_slack_id)
     contact_date_map = _build_contact_date_map(sheet_jobs)
 
     # Re-fetch open deals — check_job_readiness() needs the up-to-date list.
@@ -507,7 +504,7 @@ def _run(run_id: "int | None" = None) -> str:
                     if urgency == "warning":
                         age_hours = get_flag_alert_age_hours(job_id, flag_type)
                         if age_hours is not None and age_hours > 48:
-                            escalate_unresolved_warning(flag, int(age_hours), slack_client, josh_slack_id)
+                            escalate_unresolved_warning(flag, int(age_hours), josh_slack_id)
                     update_flag_alerted(job_id, flag_type)
                     active_flags.append(flag)
                     alerted += 1
@@ -528,15 +525,15 @@ def _run(run_id: "int | None" = None) -> str:
         other_flags = [f for f in active_flags if f["flag_type"] != "deal_not_found"]
 
         for flag in deal_not_found:
-            send_deal_not_found_alert(flag, slack_client, josh_slack_id)
+            send_deal_not_found_alert(flag, josh_slack_id)
 
         if not other_flags:
             continue
 
         if len(other_flags) == 1:
-            route_alert(other_flags[0], slack_client, pm_config, josh_slack_id, sam_slack_id)
+            route_alert(other_flags[0], pm_config, josh_slack_id, sam_slack_id)
         else:
-            route_combined_alert(other_flags, slack_client, pm_config, josh_slack_id, sam_slack_id)
+            route_combined_alert(other_flags, pm_config, josh_slack_id, sam_slack_id)
 
     # ── Step 5: Auto-resolve flags ───────────────────────────────────────────
     for flag_type in _ALL_FLAG_TYPES:
@@ -547,11 +544,11 @@ def _run(run_id: "int | None" = None) -> str:
     summary   = get_active_flags_summary()
     first_run = is_first_run_today()
     if first_run:
-        send_daily_digest(summary, slack_client, sam_slack_id)
+        send_daily_digest(summary, sam_slack_id)
 
     if datetime.now().weekday() == 0 and first_run:
         weekly = get_weekly_summary()
-        send_weekly_summary(weekly, slack_client, josh_slack_id)
+        send_weekly_summary(weekly, josh_slack_id)
 
     logger.info(f"OCA run complete — alerted: {alerted}, suppressed: {suppressed}")
 

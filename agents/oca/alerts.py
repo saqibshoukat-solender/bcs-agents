@@ -3,6 +3,7 @@ from typing import Any
 
 from utils.logger import get_logger
 from config.loader import cfg
+from integrations.slack import send_dm, send_message
 
 logger = get_logger("oca.alerts")
 
@@ -62,29 +63,12 @@ def build_alert_message(flag: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _dm(slack_client, user_id: str, text: str, pm_name: str = "") -> None:
-    if not user_id:
-        return
-    try:
-        response = slack_client.conversations_open(users=user_id)
-        channel_id = response["channel"]["id"]
-        slack_client.chat_postMessage(channel=channel_id, text=text)
-        logger.info(f"DM sent to {user_id}")
-    except Exception as e:
-        error_str = str(e)
-        if "user_not_found" in error_str:
-            name = pm_name or user_id
-            logger.warning(f"PM DM failed for {name} (user_not_found) — skipping PM DM")
-        else:
-            logger.error(f"Slack DM error to {user_id}: {e}")
+def _dm(user_id: str, text: str, pm_name: str = "") -> None:
+    send_dm(user_id, text, pm_name=pm_name)
 
 
-def _post(slack_client, channel: str, text: str) -> None:
-    try:
-        slack_client.chat_postMessage(channel=channel, text=text)
-        logger.info(f"Posted to #{channel}")
-    except Exception as e:
-        logger.error(f"Slack post error to {channel}: {e}")
+def _post(channel: str, text: str) -> None:
+    send_message(channel, text)
 
 
 def _lookup_pm_slack_id(pm_name: str, pm_config: list) -> str:
@@ -98,7 +82,6 @@ def _route(
     message: str,
     urgency: str,
     pm_name: str,
-    slack_client,
     pm_config: list,
     josh_slack_id: str,
     sam_slack_id: str,
@@ -106,22 +89,21 @@ def _route(
     pm_slack_id = _lookup_pm_slack_id(pm_name, pm_config)
 
     if urgency == "urgent":
-        _dm(slack_client, josh_slack_id, message)
+        _dm(josh_slack_id, message)
         if pm_slack_id:
-            _dm(slack_client, pm_slack_id, message, pm_name=pm_name)
+            _dm(pm_slack_id, message, pm_name=pm_name)
     elif urgency == "warning":
         if pm_slack_id:
-            _dm(slack_client, pm_slack_id, message, pm_name=pm_name)
+            _dm(pm_slack_id, message, pm_name=pm_name)
         else:
-            _dm(slack_client, josh_slack_id, message)
+            _dm(josh_slack_id, message)
     else:  # info
         oca_channel = os.getenv("SLACK_OCA_CHANNEL", "oca-alerts")
-        _post(slack_client, oca_channel, message)
+        _post(oca_channel, message)
 
 
 def route_alert(
     flag: dict[str, Any],
-    slack_client,
     pm_config: list,
     josh_slack_id: str,
     sam_slack_id: str,
@@ -129,7 +111,7 @@ def route_alert(
     message = build_alert_message(flag)
     urgency = flag.get("urgency", "info")
     pm_name = flag.get("pm_name", "")
-    _route(message, urgency, pm_name, slack_client, pm_config, josh_slack_id, sam_slack_id)
+    _route(message, urgency, pm_name, pm_config, josh_slack_id, sam_slack_id)
 
 
 def build_combined_alert_message(job_flags: list[dict[str, Any]]) -> str:
@@ -162,7 +144,6 @@ def build_combined_alert_message(job_flags: list[dict[str, Any]]) -> str:
 
 def route_combined_alert(
     job_flags: list[dict[str, Any]],
-    slack_client,
     pm_config: list,
     josh_slack_id: str,
     sam_slack_id: str,
@@ -170,7 +151,7 @@ def route_combined_alert(
     message = build_combined_alert_message(job_flags)
     urgency = _highest_urgency(job_flags)
     pm_name = job_flags[0].get("pm_name", "")
-    _route(message, urgency, pm_name, slack_client, pm_config, josh_slack_id, sam_slack_id)
+    _route(message, urgency, pm_name, pm_config, josh_slack_id, sam_slack_id)
 
 
 def build_unresolved_warning_message(flag: dict[str, Any], hours_open: int) -> str:
@@ -187,11 +168,10 @@ def build_unresolved_warning_message(flag: dict[str, Any], hours_open: int) -> s
 def escalate_unresolved_warning(
     flag: dict[str, Any],
     hours_open: int,
-    slack_client,
     josh_slack_id: str,
 ) -> None:
     message = build_unresolved_warning_message(flag, hours_open)
-    _dm(slack_client, josh_slack_id, message)
+    _dm(josh_slack_id, message)
 
 
 def build_deal_not_found_message(flag: dict[str, Any]) -> str:
@@ -207,11 +187,10 @@ def build_deal_not_found_message(flag: dict[str, Any]) -> str:
 
 def send_deal_not_found_alert(
     flag: dict[str, Any],
-    slack_client,
     josh_slack_id: str,
 ) -> None:
     message = build_deal_not_found_message(flag)
-    _dm(slack_client, josh_slack_id, message)
+    _dm(josh_slack_id, message)
 
 
 def build_no_email_history_message(
@@ -234,11 +213,10 @@ def send_no_email_history_alert(
     pm_name: str,
     pm_email: str,
     customer_email: str,
-    slack_client,
     josh_slack_id: str,
 ) -> None:
     message = build_no_email_history_message(client_name, pm_name, pm_email, customer_email)
-    _dm(slack_client, josh_slack_id, message)
+    _dm(josh_slack_id, message)
 
 
 def build_deadline_change_message(
@@ -265,16 +243,14 @@ def send_deadline_change_alert(
     old_deadline: str,
     new_deadline: str,
     deal_id: "str | None",
-    slack_client,
     josh_slack_id: str,
 ) -> None:
     message = build_deadline_change_message(client_name, pm_name, old_deadline, new_deadline, deal_id)
-    _dm(slack_client, josh_slack_id, message)
+    _dm(josh_slack_id, message)
 
 
 def send_daily_digest(
     active_flags_summary: dict[str, int],
-    slack_client,
     sam_slack_id: str,
 ) -> None:
     stale = active_flags_summary.get("stale", 0)
@@ -300,12 +276,11 @@ def send_daily_digest(
     if not recipient:
         logger.warning("SAM_SLACK_USER_ID not set — sending daily digest to Josh instead")
         recipient = _JOSH_SLACK_USER_ID
-    _dm(slack_client, recipient, message)
+    _dm(recipient, message)
 
 
 def send_weekly_summary(
     weekly_data: dict[str, int],
-    slack_client,
     josh_slack_id: str,
 ) -> None:
     message = (
@@ -314,4 +289,4 @@ def send_weekly_summary(
         f"Flags resolved this week: {weekly_data.get('resolved', 0)}\n"
         f"Still active: {weekly_data.get('active', 0)}"
     )
-    _dm(slack_client, josh_slack_id, message)
+    _dm(josh_slack_id, message)
