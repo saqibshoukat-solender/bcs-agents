@@ -137,6 +137,21 @@ if _db_available:
         log         = Column(Text, nullable=True)
         summary     = Column(String, nullable=True)  # one-line summary, e.g. "10 emails sent, 2 escalations"
 
+    class DashboardUser(Base):
+        __tablename__ = "dashboard_users"
+        id            = Column(Integer, primary_key=True, autoincrement=True)
+        email         = Column(String, unique=True, nullable=False, index=True)
+        password_hash = Column(String, nullable=False)
+        created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+        updated_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    class DashboardSession(Base):
+        __tablename__ = "dashboard_sessions"
+        token      = Column(String, primary_key=True)
+        user_id    = Column(Integer, nullable=False, index=True)
+        created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+        expires_at = Column(DateTime(timezone=True), nullable=False)
+
 
 # --- In-memory fallback stores ---
 _memory_store: dict[tuple[str, str], list[datetime]] = {}
@@ -516,6 +531,107 @@ def get_run_logs(agent: "str | None" = None, limit: int = 50) -> list[dict]:
     except Exception as e:
         logger.error(f"get_run_logs: {e}")
         return []
+
+
+# --- Dashboard auth (users + sessions) ---
+
+def get_user_by_email(email: str) -> "dict | None":
+    if not _db_available:
+        return None
+    try:
+        with _Session() as s:
+            r = s.query(DashboardUser).filter_by(email=email.strip().lower()).first()
+            if not r:
+                return None
+            return {"id": r.id, "email": r.email, "password_hash": r.password_hash}
+    except Exception as e:
+        logger.error(f"get_user_by_email: {e}")
+        return None
+
+
+def get_user_by_id(user_id: int) -> "dict | None":
+    if not _db_available:
+        return None
+    try:
+        with _Session() as s:
+            r = s.query(DashboardUser).filter_by(id=user_id).first()
+            if not r:
+                return None
+            return {"id": r.id, "email": r.email, "password_hash": r.password_hash}
+    except Exception as e:
+        logger.error(f"get_user_by_id: {e}")
+        return None
+
+
+def create_user(email: str, password_hash: str) -> bool:
+    if not _db_available:
+        return False
+    try:
+        with _Session() as s:
+            email = email.strip().lower()
+            if s.query(DashboardUser).filter_by(email=email).first():
+                return False
+            s.add(DashboardUser(email=email, password_hash=password_hash))
+            s.commit()
+            return True
+    except Exception as e:
+        logger.error(f"create_user: {e}")
+        return False
+
+
+def update_user_password(email: str, password_hash: str) -> bool:
+    if not _db_available:
+        return False
+    try:
+        with _Session() as s:
+            r = s.query(DashboardUser).filter_by(email=email.strip().lower()).first()
+            if not r:
+                return False
+            r.password_hash = password_hash
+            r.updated_at = datetime.now(timezone.utc)
+            s.commit()
+            return True
+    except Exception as e:
+        logger.error(f"update_user_password: {e}")
+        return False
+
+
+def create_session(user_id: int, token: str, expires_at: datetime) -> None:
+    if not _db_available:
+        return
+    try:
+        with _Session() as s:
+            s.add(DashboardSession(token=token, user_id=user_id, expires_at=expires_at))
+            s.commit()
+    except Exception as e:
+        logger.error(f"create_session: {e}")
+
+
+def get_session(token: str) -> "dict | None":
+    if not _db_available:
+        return None
+    try:
+        with _Session() as s:
+            r = s.query(DashboardSession).filter_by(token=token).first()
+            if not r:
+                return None
+            return {"token": r.token, "user_id": r.user_id, "expires_at": r.expires_at}
+    except Exception as e:
+        logger.error(f"get_session: {e}")
+        return None
+
+
+def delete_session(token: str) -> None:
+    if not _db_available:
+        return
+    try:
+        with _Session() as s:
+            r = s.query(DashboardSession).filter_by(token=token).first()
+            if r:
+                s.delete(r)
+                s.commit()
+    except Exception as e:
+        logger.error(f"delete_session: {e}")
 
 
 # --- Casey active jobs ---

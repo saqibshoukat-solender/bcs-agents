@@ -7,24 +7,52 @@
 
 <!-- Stat cards -->
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md transition-shadow duration-200">
+    <div class="flex items-start justify-between mb-3">
+      <div class="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center">
+        <svg class="w-4.5 h-4.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+      </div>
+    </div>
     <div class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Total Active Jobs</div>
-    <div class="text-3xl font-bold text-slate-800">{{ stats.total_active_jobs }}</div>
+    <div class="text-3xl font-extrabold text-slate-800 tracking-tight">{{ stats.total_active_jobs }}</div>
     <div class="text-xs text-slate-400 mt-1">In Process tab</div>
   </div>
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md transition-shadow duration-200">
+    <div class="flex items-start justify-between mb-3">
+      <div class="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+        <svg class="w-4.5 h-4.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </div>
+    </div>
     <div class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Due for Update</div>
-    <div class="text-3xl font-bold text-amber-500">{{ stats.jobs_due_for_update }}</div>
+    <div class="text-3xl font-extrabold text-amber-500 tracking-tight">{{ stats.jobs_due_for_update }}</div>
     <div class="text-xs text-slate-400 mt-1">Casey queue</div>
   </div>
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md transition-shadow duration-200">
+    <div class="flex items-start justify-between mb-3">
+      <div class="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center">
+        <svg class="w-4.5 h-4.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/>
+        </svg>
+      </div>
+    </div>
     <div class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Escalations</div>
-    <div class="text-3xl font-bold text-red-500">{{ stats.escalations_this_week }}</div>
+    <div class="text-3xl font-extrabold text-red-500 tracking-tight">{{ stats.escalations_this_week }}</div>
     <div class="text-xs text-slate-400 mt-1">Active</div>
   </div>
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 hover:shadow-md transition-shadow duration-200">
+    <div class="flex items-start justify-between mb-3">
+      <div class="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
+        <svg class="w-4.5 h-4.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+        </svg>
+      </div>
+    </div>
     <div class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">OCA Flags Active</div>
-    <div class="text-3xl font-bold text-blue-500">{{ stats.oca_flags_active }}</div>
+    <div class="text-3xl font-extrabold text-blue-500 tracking-tight">{{ stats.oca_flags_active }}</div>
     <div class="text-xs text-slate-400 mt-1">Unresolved</div>
   </div>
 </div>
@@ -33,14 +61,16 @@
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
 
   <!-- Casey -->
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5">
     <div class="flex items-center justify-between mb-3">
-      <div class="flex items-center gap-2">
-        <div class="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center text-sm">🤖</div>
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center text-sm">🤖</div>
         <span class="font-semibold text-slate-800">Casey Agent</span>
       </div>
       {% if casey_run %}
-      <span class="text-xs {% if casey_run.status == 'success' %}text-green-600{% elif casey_run.status == 'error' %}text-red-500{% else %}text-amber-500{% endif %} font-medium">
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full
+        {% if casey_run.status == 'success' %}text-emerald-700 bg-emerald-50{% elif casey_run.status == 'error' %}text-red-700 bg-red-50{% else %}text-amber-700 bg-amber-50{% endif %}">
+        <span class="w-1.5 h-1.5 rounded-full {% if casey_run.status == 'success' %}bg-emerald-500{% elif casey_run.status == 'error' %}bg-red-500{% else %}bg-amber-500{% endif %}"></span>
         {{ casey_run.status | capitalize }}
       </span>
       {% endif %}
@@ -52,27 +82,29 @@
     <div class="text-xs text-slate-500 mb-1">{{ casey_run.summary }}</div>
     {% endif %}
     {% if casey_run %}
-    <div class="text-xs mb-4"><a href="/runs/{{ casey_run.id }}" class="text-blue-600 hover:underline">View Full Log →</a></div>
+    <div class="text-xs mb-4"><a href="/runs/{{ casey_run.id }}" class="text-indigo-600 font-medium hover:text-indigo-700 hover:underline">View Full Log →</a></div>
     {% else %}
     <div class="mb-4"></div>
     {% endif %}
     <div id="casey-run-status">
       <button hx-post="/agents/casey/run" hx-target="#casey-run-status" hx-swap="innerHTML"
-        class="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+        class="w-full px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-150">
         ▶ Run Casey Now
       </button>
     </div>
   </div>
 
   <!-- OCA -->
-  <div class="bg-white rounded-xl shadow-sm p-5">
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5">
     <div class="flex items-center justify-between mb-3">
-      <div class="flex items-center gap-2">
-        <div class="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center text-sm">🔍</div>
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center text-sm">🔍</div>
         <span class="font-semibold text-slate-800">OCA Agent</span>
       </div>
       {% if oca_run %}
-      <span class="text-xs {% if oca_run.status == 'success' %}text-green-600{% elif oca_run.status == 'error' %}text-red-500{% else %}text-amber-500{% endif %} font-medium">
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full
+        {% if oca_run.status == 'success' %}text-emerald-700 bg-emerald-50{% elif oca_run.status == 'error' %}text-red-700 bg-red-50{% else %}text-amber-700 bg-amber-50{% endif %}">
+        <span class="w-1.5 h-1.5 rounded-full {% if oca_run.status == 'success' %}bg-emerald-500{% elif oca_run.status == 'error' %}bg-red-500{% else %}bg-amber-500{% endif %}"></span>
         {{ oca_run.status | capitalize }}
       </span>
       {% endif %}
@@ -84,13 +116,13 @@
     <div class="text-xs text-slate-500 mb-1">{{ oca_run.summary }}</div>
     {% endif %}
     {% if oca_run %}
-    <div class="text-xs mb-4"><a href="/runs/{{ oca_run.id }}" class="text-blue-600 hover:underline">View Full Log →</a></div>
+    <div class="text-xs mb-4"><a href="/runs/{{ oca_run.id }}" class="text-indigo-600 font-medium hover:text-indigo-700 hover:underline">View Full Log →</a></div>
     {% else %}
     <div class="mb-4"></div>
     {% endif %}
     <div id="oca-run-status">
       <button hx-post="/agents/oca/run" hx-target="#oca-run-status" hx-swap="innerHTML"
-        class="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+        class="w-full px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-150">
         ▶ Run OCA Now
       </button>
     </div>
@@ -99,17 +131,24 @@
 </div>
 
 <!-- Live log window -->
-<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+<div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 mb-6">
   <h2 class="text-sm font-semibold text-slate-700 mb-3">Agent Log</h2>
-  <pre id="agent-log"
-    class="bg-slate-900 text-green-400 rounded-lg p-4 text-xs font-mono h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed">Waiting for agent run…</pre>
+  <div class="rounded-xl overflow-hidden ring-1 ring-slate-800">
+    <div class="bg-slate-800 px-3.5 py-2 flex items-center gap-1.5">
+      <span class="w-2.5 h-2.5 rounded-full bg-red-400/80"></span>
+      <span class="w-2.5 h-2.5 rounded-full bg-amber-400/80"></span>
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-400/80"></span>
+    </div>
+    <pre id="agent-log"
+      class="bg-slate-900 text-emerald-400 p-4 text-xs font-mono h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed">Waiting for agent run…</pre>
+  </div>
 </div>
 
 <!-- Delete Jobs card -->
-<div class="bg-white rounded-xl shadow-sm p-5 mb-6">
+<div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-5 mb-6">
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
-      <div class="w-7 h-7 rounded-lg bg-red-100 flex items-center justify-center text-sm">🗑️</div>
+      <div class="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center text-sm">🗑️</div>
       <div>
         <h2 class="font-semibold text-slate-800 text-sm">Delete Jobs</h2>
         <p class="text-xs text-slate-500">Removes all jobs, escalations, and alert history. Config is preserved.</p>
@@ -119,7 +158,7 @@
   </div>
   <button hx-post="/jobs/delete" hx-target="#delete-result" hx-swap="innerHTML"
     hx-confirm="This will permanently delete all jobs, escalations, and alert history from the local database. Config data will be preserved. Continue?"
-    class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors">
+    class="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-150">
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>

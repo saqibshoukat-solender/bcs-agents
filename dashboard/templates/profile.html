@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Profile — BCS Agents{% endblock %}
+{% block heading %}Profile{% endblock %}
+
+{% block content %}
+
+<div class="max-w-lg space-y-6">
+
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-6">
+    <div class="flex items-center gap-3 mb-1">
+      <div class="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center text-lg">👤</div>
+      <div>
+        <h2 class="font-semibold text-slate-800">Account</h2>
+        <p class="text-xs text-slate-500">{{ user_email }}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 p-6">
+    <h2 class="font-semibold text-slate-800 mb-1">Change Password</h2>
+    <p class="text-xs text-slate-500 mb-5">Update the password used to sign in to this dashboard.</p>
+
+    {% if error %}
+    <div class="mb-4 px-3 py-2.5 bg-red-50 ring-1 ring-red-100 rounded-xl text-sm text-red-700 font-medium">
+      {{ error }}
+    </div>
+    {% endif %}
+    {% if success %}
+    <div class="mb-4 px-3 py-2.5 bg-emerald-50 ring-1 ring-emerald-100 rounded-xl text-sm text-emerald-700 font-medium">
+      {{ success }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/profile/password" class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Current Password</label>
+        <input type="password" name="current_password" required
+          class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"/>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">New Password</label>
+          <input type="password" name="new_password" required minlength="8"
+            class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">Confirm New Password</label>
+          <input type="password" name="confirm_password" required minlength="8"
+            class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"/>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400">Must be at least 8 characters.</p>
+      <button type="submit"
+        class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-150">
+        Update Password
+      </button>
+    </form>
+  </div>
+
+</div>
+
+{% endblock %}

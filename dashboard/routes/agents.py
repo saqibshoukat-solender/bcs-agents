@@ -61,8 +61,8 @@ async def run_oca():
 
 def _run_started_html(run_id: int, agent: str) -> str:
     return f"""
-<div id="run-status-{agent}" class="flex items-center gap-2 text-sm text-slate-600">
-  <svg class="w-4 h-4 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+<div id="run-status-{agent}" class="flex items-center gap-2 text-sm font-medium text-slate-600">
+  <svg class="w-4 h-4 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
   </svg>
@@ -76,13 +76,13 @@ def _run_started_html(run_id: int, agent: str) -> str:
       if (e.data === '[DONE]') {{
         src.close();
         const statusEl = document.getElementById('run-status-{agent}');
-        if (statusEl) statusEl.innerHTML = '<span class="text-green-600 font-medium">✓ Run complete</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-emerald-600 font-semibold">✓ Run complete</span>';
         return;
       }}
       if (e.data === '[ERROR]') {{
         src.close();
         const statusEl = document.getElementById('run-status-{agent}');
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600 font-medium">✗ Run failed</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600 font-semibold">✗ Run failed</span>';
         return;
       }}
       if (logEl) {{

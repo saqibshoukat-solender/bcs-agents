@@ -2,7 +2,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 BASE_DIR = Path(__file__).parent
 
@@ -15,11 +15,33 @@ from dashboard.routes.jobs import router as jobs_router
 from dashboard.routes.config import router as config_router
 from dashboard.routes.agents import router as agents_router
 from dashboard.routes.runs import router as runs_router
+from dashboard.routes.auth import router as auth_router
 
 app.include_router(jobs_router)
 app.include_router(config_router)
 app.include_router(agents_router)
 app.include_router(runs_router)
+app.include_router(auth_router)
+
+_PUBLIC_PATHS = {"/login"}
+_PUBLIC_PREFIXES = ("/static/",)
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    from dashboard.auth import get_current_user
+    user = get_current_user(request)
+    if not user:
+        if request.headers.get("hx-request") == "true":
+            return Response(status_code=401, headers={"HX-Redirect": "/login"})
+        return RedirectResponse("/login", status_code=302)
+
+    request.state.user = user
+    return await call_next(request)
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -4,33 +4,46 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}BCS Agents{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          colors: { sidebar: '#1e293b' }
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          colors: { sidebar: '#0f172a', brand: '#4f46e5' },
+          boxShadow: { glow: '0 8px 24px -8px rgba(79, 70, 229, 0.45)' },
         }
       }
     }
   </script>
+  <style>
+    html { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.55); }
+    ::selection { background: rgba(79, 70, 229, 0.25); }
+  </style>
 </head>
-<body class="h-full bg-slate-100 flex overflow-hidden">
+<body class="h-full bg-slate-50 flex overflow-hidden text-slate-800">
 
   <!-- Mobile overlay -->
   <div id="overlay" onclick="closeSidebar()"
-    class="fixed inset-0 bg-black bg-opacity-50 z-20 hidden lg:hidden"></div>
+    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-20 hidden lg:hidden"></div>
 
   <!-- ── Sidebar ── -->
   <aside id="sidebar"
-    class="fixed inset-y-0 left-0 z-30 w-64 bg-slate-800 flex flex-col transform -translate-x-full transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:z-auto">
+    class="fixed inset-y-0 left-0 z-30 w-64 bg-gradient-to-b from-slate-900 to-slate-950 flex flex-col transform -translate-x-full transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:z-auto border-r border-slate-800/60">
 
     <!-- Logo -->
-    <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-700">
-      <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">B</div>
+    <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-800/60">
+      <div class="w-9 h-9 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-glow">B</div>
       <div>
-        <div class="text-white font-semibold text-sm leading-tight">BCS Agents</div>
+        <div class="text-white font-semibold text-sm leading-tight tracking-tight">BCS Agents</div>
         <div class="text-slate-400 text-xs">Admin Dashboard</div>
       </div>
     </div>
@@ -40,8 +53,8 @@
 
       <!-- Dashboard -->
       <a href="/"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
-          {% if page == 'dashboard' %}bg-blue-600 text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+        class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150
+          {% if page == 'dashboard' %}bg-indigo-600 text-white shadow-glow{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-white{% endif %}">
         <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
@@ -52,8 +65,8 @@
       <!-- Jobs section -->
       <div>
         <button onclick="toggleSection('jobs-sub')"
-          class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
-            {% if page in ['to-start','in-process'] %}text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+          class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150
+            {% if page in ['to-start','in-process'] %}text-white bg-slate-800/50{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-white{% endif %}">
           <span class="flex items-center gap-3">
             <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -61,20 +74,20 @@
             </svg>
             Jobs
           </span>
-          <svg id="jobs-sub-arrow" class="w-3.5 h-3.5 transition-transform {% if page in ['to-start','in-process'] %}rotate-180{% endif %}"
+          <svg id="jobs-sub-arrow" class="w-3.5 h-3.5 transition-transform duration-200 {% if page in ['to-start','in-process'] %}rotate-180{% endif %}"
             fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
           </svg>
         </button>
         <div id="jobs-sub" class="{% if page not in ['to-start','in-process'] %}hidden{% endif %} mt-1 space-y-0.5">
           <a href="/jobs/to-start"
-            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm transition-colors
-              {% if page == 'to-start' %}bg-slate-700 text-white{% else %}text-slate-400 hover:bg-slate-700 hover:text-white{% endif %}">
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-xl text-sm transition-all duration-150 border-l-2
+              {% if page == 'to-start' %}border-indigo-500 bg-slate-800/60 text-white{% else %}border-transparent text-slate-400 hover:bg-slate-800/50 hover:text-white{% endif %}">
             To Start
           </a>
           <a href="/jobs/in-process"
-            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm transition-colors
-              {% if page == 'in-process' %}bg-slate-700 text-white{% else %}text-slate-400 hover:bg-slate-700 hover:text-white{% endif %}">
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-xl text-sm transition-all duration-150 border-l-2
+              {% if page == 'in-process' %}border-indigo-500 bg-slate-800/60 text-white{% else %}border-transparent text-slate-400 hover:bg-slate-800/50 hover:text-white{% endif %}">
             In Process
           </a>
         </div>
@@ -82,8 +95,8 @@
 
       <!-- Run History -->
       <a href="/runs"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
-          {% if page == 'runs' %}bg-blue-600 text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+        class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150
+          {% if page == 'runs' %}bg-indigo-600 text-white shadow-glow{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-white{% endif %}">
         <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -94,8 +107,8 @@
       <!-- Configurations section -->
       <div>
         <button onclick="toggleSection('config-sub')"
-          class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
-            {% if page == 'config' %}text-white{% else %}text-slate-300 hover:bg-slate-700 hover:text-white{% endif %}">
+          class="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150
+            {% if page == 'config' %}text-white bg-slate-800/50{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-white{% endif %}">
           <span class="flex items-center gap-3">
             <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -104,7 +117,7 @@
             </svg>
             Configurations
           </span>
-          <svg id="config-sub-arrow" class="w-3.5 h-3.5 transition-transform {% if page == 'config' %}rotate-180{% endif %}"
+          <svg id="config-sub-arrow" class="w-3.5 h-3.5 transition-transform duration-200 {% if page == 'config' %}rotate-180{% endif %}"
             fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
           </svg>
@@ -112,7 +125,7 @@
         <div id="config-sub" class="{% if page != 'config' %}hidden{% endif %} mt-1 space-y-0.5">
           {% for item in [('QuickBooks', '#quickbooks'), ('PM List', '#pm-list'), ('Sales Rep List', '#sales-reps'), ('Google Sheets', '#google-sheets'), ('HubSpot Config', '#hubspot'), ('HS Custom Fields', '#hubspot-fields'), ('Slack Bot Token', '#slack')] %}
           <a href="/config{{ item[1] }}"
-            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-lg text-sm text-slate-400 hover:bg-slate-700 hover:text-white transition-colors">
+            class="flex items-center gap-3 pl-10 pr-3 py-2 rounded-xl text-sm text-slate-400 hover:bg-slate-800/50 hover:text-white transition-all duration-150 border-l-2 border-transparent">
             {{ item[0] }}
           </a>
           {% endfor %}
@@ -122,8 +135,22 @@
     </nav>
 
     <!-- Footer -->
-    <div class="px-4 py-3 border-t border-slate-700">
-      <div class="text-xs text-slate-500">Blue Collar Scholars</div>
+    <div class="px-4 py-3 border-t border-slate-800/60 space-y-2">
+      <a href="/profile"
+        class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:bg-slate-800/60 hover:text-white transition-all duration-150">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+        </svg>
+        Account Settings
+      </a>
+      <a href="/logout"
+        class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:bg-slate-800/60 hover:text-white transition-all duration-150">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        Logout
+      </a>
+      <div class="text-xs text-slate-500 pt-1">Blue Collar Scholars</div>
     </div>
   </aside>
 
@@ -131,16 +158,19 @@
   <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
     <!-- Topbar -->
-    <header class="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center gap-4 flex-shrink-0">
+    <header class="bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-3.5 flex items-center gap-4 flex-shrink-0 sticky top-0 z-10 shadow-sm">
       <button onclick="openSidebar()" class="lg:hidden text-slate-500 hover:text-slate-700">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
       </button>
-      <h1 class="text-slate-800 font-semibold text-base">{% block heading %}BCS Agents{% endblock %}</h1>
+      <h1 class="text-slate-800 font-semibold text-base tracking-tight">{% block heading %}BCS Agents{% endblock %}</h1>
       <div class="ml-auto flex items-center gap-2">
-        <span class="inline-flex items-center gap-1.5 text-xs text-green-600 font-medium">
-          <span class="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"></span>
+        <span class="inline-flex items-center gap-1.5 text-xs text-emerald-600 font-medium bg-emerald-50 px-2.5 py-1 rounded-full ring-1 ring-emerald-100">
+          <span class="relative w-1.5 h-1.5 inline-block">
+            <span class="absolute inset-0 rounded-full bg-emerald-500 animate-ping"></span>
+            <span class="absolute inset-0 rounded-full bg-emerald-500"></span>
+          </span>
           Live
         </span>
       </div>
@@ -154,7 +184,7 @@
 
   <!-- Toast notification (fixed, bottom-right) -->
   <div id="toast"
-    class="fixed bottom-5 right-5 z-50 bg-white border border-slate-200 shadow-lg rounded-xl px-5 py-3 text-sm min-w-[200px] transition-opacity duration-300">
+    class="fixed bottom-5 right-5 z-50 bg-white border border-slate-200 shadow-xl rounded-2xl px-5 py-3.5 text-sm min-w-[200px] transition-opacity duration-300 ring-1 ring-slate-900/5">
   </div>
 
   <script>

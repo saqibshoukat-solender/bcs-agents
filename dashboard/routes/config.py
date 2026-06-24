@@ -31,9 +31,9 @@ def _google_service_account_email() -> str:
 
 
 def _toast(msg: str, success: bool = True) -> str:
-    color = "green" if success else "red"
+    color = "emerald" if success else "red"
     icon  = "✓" if success else "✗"
-    return f'<span class="text-{color}-600 font-medium">{icon} {msg}</span>'
+    return f'<span class="inline-flex items-center gap-1.5 text-{color}-700 font-semibold"><span class="text-{color}-500">{icon}</span> {msg}</span>'
 
 
 def _pm_table_html(pms: list) -> str:
@@ -41,27 +41,27 @@ def _pm_table_html(pms: list) -> str:
     for pm in pms:
         pid, name, email, slack = pm["id"], pm["full_name"], pm["email"], pm["slack_user_id"]
         rows += (
-            f'<tr class="hover:bg-slate-50">'
+            f'<tr class="hover:bg-slate-50/80 transition-colors duration-100">'
             f'<td class="px-4 py-3 font-medium text-slate-800">{name}</td>'
             f'<td class="px-4 py-3 text-slate-600">{email}</td>'
             f'<td class="px-4 py-3 text-slate-500 font-mono text-xs">{slack}</td>'
             f'<td class="px-4 py-3 text-right">'
             f'<button hx-delete="/api/config/pm/{pid}" hx-target="#pm-tbody" hx-swap="innerHTML"'
             f' hx-confirm="Delete {name}?"'
-            f' class="text-slate-400 hover:text-red-500 transition-colors text-xs">Delete</button>'
+            f' class="text-slate-400 hover:text-red-500 transition-colors duration-150 text-xs font-medium">Delete</button>'
             f'</td></tr>'
         )
     # Always re-include the hidden add row so it survives HTMX swaps
     rows += (
-        '<tr id="pm-add-row" class="hidden bg-blue-50">'
+        '<tr id="pm-add-row" class="hidden bg-indigo-50/60">'
         '<td class="px-4 py-2"><input form="pm-add-form" name="full_name" type="text" placeholder="Full Name"'
-        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"/></td>'
+        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
         '<td class="px-4 py-2"><input form="pm-add-form" name="email" type="email" placeholder="email@bcs.net"'
-        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"/></td>'
+        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
         '<td class="px-4 py-2"><input form="pm-add-form" name="slack_user_id" type="text" placeholder="U0XXXXXXX"'
-        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"/></td>'
+        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
         '<td class="px-4 py-2 text-right whitespace-nowrap">'
-        '<button type="submit" form="pm-add-form" class="px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md mr-1">Add</button>'
+        '<button type="submit" form="pm-add-form" class="px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md mr-1">Add</button>'
         '<button type="button" onclick="hideAddRow(\'pm\')" class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-md">Cancel</button>'
         '</td></tr>'
     )
@@ -73,19 +73,19 @@ def _sr_table_html(reps: list) -> str:
     for r in reps:
         rid, name, email, owner = r["id"], r["name"], r["email"], r["hubspot_owner_id"]
         rows += (
-            f'<tr class="hover:bg-slate-50">'
+            f'<tr class="hover:bg-slate-50/80 transition-colors duration-100">'
             f'<td class="px-4 py-3 font-medium text-slate-800">{name}</td>'
             f'<td class="px-4 py-3 text-slate-600">{email}</td>'
             f'<td class="px-4 py-3 text-slate-500 font-mono text-xs">{owner}</td>'
             f'<td class="px-4 py-3 text-right">'
             f'<button hx-delete="/api/config/salesrep/{rid}" hx-target="#sr-tbody" hx-swap="innerHTML"'
             f' hx-confirm="Delete {name}?"'
-            f' class="text-slate-400 hover:text-red-500 transition-colors text-xs">Delete</button>'
+            f' class="text-slate-400 hover:text-red-500 transition-colors duration-150 text-xs font-medium">Delete</button>'
             f'</td></tr>'
         )
     # Always re-include the hidden add row so it survives HTMX swaps
     rows += (
-        '<tr id="sr-add-row" class="hidden bg-purple-50">'
+        '<tr id="sr-add-row" class="hidden bg-purple-50/60">'
         '<td class="px-4 py-2"><input form="sr-add-form" name="name" type="text" placeholder="Full Name"'
         ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500"/></td>'
         '<td class="px-4 py-2"><input form="sr-add-form" name="email" type="email" placeholder="email@bcs.net"'
@@ -93,7 +93,7 @@ def _sr_table_html(reps: list) -> str:
         '<td class="px-4 py-2"><input form="sr-add-form" name="hubspot_owner_id" type="text" placeholder="owner_xxx"'
         ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"/></td>'
         '<td class="px-4 py-2 text-right whitespace-nowrap">'
-        '<button type="submit" form="sr-add-form" class="px-2.5 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md mr-1">Add</button>'
+        '<button type="submit" form="sr-add-form" class="px-2.5 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-md mr-1">Add</button>'
         '<button type="button" onclick="hideAddRow(\'sr\')" class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-md">Cancel</button>'
         '</td></tr>'
     )
@@ -198,8 +198,8 @@ async def quickbooks_status():
     refresh_token = get_config("qb_refresh_token")
     if not refresh_token:
         return HTMLResponse(
-            '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-500">'
-            '<span class="w-2 h-2 bg-red-400 rounded-full"></span> Not connected</span>'
+            '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-700 bg-red-50 px-2.5 py-1 rounded-full ring-1 ring-red-100">'
+            '<span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span> Not connected</span>'
         )
 
     expires_at_str = get_config("qb_token_expiry")
@@ -209,15 +209,15 @@ async def quickbooks_status():
             if datetime.now(timezone.utc) < expires_at:
                 when = expires_at.strftime("%H:%M UTC")
                 return HTMLResponse(
-                    '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">'
-                    f'<span class="w-2 h-2 bg-green-500 rounded-full"></span> Connected — token valid until {when}</span>'
+                    '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full ring-1 ring-emerald-100">'
+                    f'<span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span> Connected — token valid until {when}</span>'
                 )
         except ValueError:
             pass
 
     return HTMLResponse(
-        '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-yellow-600">'
-        '<span class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span> Connected — refreshing token</span>'
+        '<span class="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full ring-1 ring-amber-100">'
+        '<span class="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span> Connected — refreshing token</span>'
     )
 
 
