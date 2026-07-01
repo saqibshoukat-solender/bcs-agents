@@ -28,8 +28,8 @@ Rules you never break:
 _SCENARIO_INSTRUCTIONS = {
     "not_started": (
         "This job has not started yet. The customer is waiting for their project to begin. "
-        "Acknowledge that the project is scheduled, confirm the start date only if a confirmed "
-        "date exists in the job data, and reassure them the team is preparing. "
+        "Acknowledge that the project is scheduled and reassure them the team is preparing. "
+        "Do NOT mention or reference any specific start date. "
         "Keep the tone warm and patient."
     ),
     "in_progress": (
@@ -46,8 +46,9 @@ _SCENARIO_INSTRUCTIONS = {
         "This is the first email Casey sends after the deposit has been received and the "
         "project enters operations. Give the customer a warm welcome, confirm that their "
         "deposit was received, introduce the handoff from sales to the operations team, and "
-        "set the expectation that their PM will be in touch within 2 weeks to confirm the "
-        "start date. Sign off from the PM. Keep the email under 150 words."
+        "set the expectation that their PM will be in touch within 2 weeks to discuss next steps. "
+        "Do NOT mention or reference any specific start date. "
+        "Sign off from the PM. Keep the email under 150 words."
     ),
 }
 
@@ -76,13 +77,13 @@ def compose_customer_update_email(
     """
     scenario_instruction = _SCENARIO_INSTRUCTIONS.get(scenario, _SCENARIO_INSTRUCTIONS["in_progress"])
 
+    logger.info("Start date excluded from email context per client instruction")
     context_lines = []
     if job_type:
         context_lines.append(f"Job type: {job_type}")
     if job_description:
         context_lines.append(f"Job description: {job_description}")
-    if start_date:
-        context_lines.append(f"Start date: {start_date}")
+    # start_date intentionally omitted from LLM context
     if contractor:
         context_lines.append(f"Assigned crew/contractor: {contractor}")
     if to_collect:
@@ -159,11 +160,11 @@ Return ONLY the JSON, no markdown backticks, no other text."""
             pass
         logger.error(f"Anthropic email composition failed [{scenario}]: {e} — Response: {response_body}")
         first_name = customer_name.split()[0] if customer_name else customer_name
-        if scenario == "invoice_reminder" and to_collect:
+        if scenario == "invoice_reminder":
             body = (
                 f"<p>Hi {first_name},</p>"
-                f"<p>I hope your project is going well! This is a friendly reminder that there is an outstanding "
-                f"balance of <strong>{to_collect}</strong> remaining on your project. "
+                f"<p>I hope your project is going well! As your project nears completion, we'll be in touch "
+                f"about final payment arrangements. "
                 f"Please don't hesitate to reach out with any questions.</p>"
                 f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"
             )
@@ -171,7 +172,7 @@ Return ONLY the JSON, no markdown backticks, no other text."""
             body = (
                 f"<p>Hi {first_name},</p>"
                 f"<p>Thank you for choosing Blue Collar Scholars! We wanted to reach out and confirm that your "
-                f"project is scheduled and our team is ready. We'll be in touch as we get closer to the start date. "
+                f"project is scheduled and our team is preparing. We'll be in touch with more details soon. "
                 f"Please reach out with any questions.</p>"
                 f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"
             )
@@ -180,8 +181,8 @@ Return ONLY the JSON, no markdown backticks, no other text."""
                 f"<p>Hi {first_name},</p>"
                 f"<p>Welcome to Blue Collar Scholars! We're happy to let you know that your deposit has been "
                 f"received and your project is now moving into our operations phase.</p>"
-                f"<p>Your Project Manager, {pm_name}, will be in touch within the next two weeks to confirm "
-                f"your start date and walk you through next steps.</p>"
+                f"<p>Your Project Manager, {pm_name}, will be in touch within the next two weeks to walk you "
+                f"through next steps.</p>"
                 f"<p>Thank you for choosing us — please don't hesitate to reach out with any questions in "
                 f"the meantime.</p>"
                 f"<p>Best regards,<br>{pm_name}<br>Blue Collar Scholars</p>"

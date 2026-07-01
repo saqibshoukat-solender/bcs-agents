@@ -59,6 +59,7 @@ if _db_available:
         alert_type = Column(String, nullable=False)
         sent_at = Column(DateTime(timezone=True), nullable=False)
         deal_name = Column(String, nullable=True)
+        send_count = Column(Integer, nullable=False, default=1)
 
     class CaseyActiveJob(Base):
         __tablename__ = "casey_active_jobs"
@@ -94,6 +95,9 @@ if _db_available:
         total_project = Column(String, nullable=True)
         sheet_tab = Column(String, nullable=True)
         deadline_to_start = Column(String, nullable=True)
+        comms_hold = Column(Boolean, nullable=False, default=False)
+        comms_hold_reason = Column(Text, nullable=True)
+        comms_hold_set_at = Column(DateTime(timezone=True), nullable=True)
 
     class CustomerEmailHistory(Base):
         __tablename__ = "customer_email_history"
@@ -189,6 +193,9 @@ def _row_to_dict(row: "CaseyActiveJob") -> dict:
         "total_project": row.total_project,
         "sheet_tab": row.sheet_tab,
         "deadline_to_start": row.deadline_to_start,
+        "comms_hold": row.comms_hold or False,
+        "comms_hold_reason": row.comms_hold_reason,
+        "comms_hold_set_at": row.comms_hold_set_at,
     }
 
 
@@ -215,6 +222,12 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS pm_communication_history TEXT"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS deadline_to_start VARCHAR"))
             conn.execute(text("ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS summary VARCHAR"))
+            # Fix 3: per-customer hold flag
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS comms_hold BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS comms_hold_reason TEXT"))
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS comms_hold_set_at TIMESTAMP WITH TIME ZONE"))
+            # Fix 4: duplicate send audit trail
+            conn.execute(text("ALTER TABLE casey_sent_alerts ADD COLUMN IF NOT EXISTS send_count INTEGER NOT NULL DEFAULT 1"))
             conn.commit()
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
@@ -225,6 +238,10 @@ def init_db() -> None:
                 "hubspot_field_escalation_flag":   "escalation_flag",
                 "hubspot_field_escalation_reason": "escalation_reason",
                 "hubspot_portal_id":               "51566851",
+                # Fix 2: global email pause — default to paused so emails cannot go
+                # out accidentally on first deploy; admin must explicitly activate.
+                "casey_emails_paused":    "true",
+                "casey_emails_paused_at": "",
             }
             for key, default_val in _hs_defaults.items():
                 existing = conn.execute(
@@ -1301,6 +1318,72 @@ def get_weekly_summary() -> dict:
     except Exception as e:
         logger.error(f"DB error in get_weekly_summary: {e}")
     return result
+
+
+# --- Fix 3: per-customer comms hold ---
+
+def set_comms_hold(job_id: int, reason: str) -> bool:
+    if not _db_available:
+        return False
+    try:
+        with _Session() as s:
+            row = s.query(CaseyActiveJob).filter_by(id=job_id).first()
+            if not row:
+                return False
+            row.comms_hold = True
+            row.comms_hold_reason = reason.strip()
+            row.comms_hold_set_at = datetime.now(timezone.utc)
+            s.commit()
+            return True
+    except Exception as e:
+        logger.error(f"set_comms_hold({job_id}): {e}")
+        return False
+
+
+def clear_comms_hold(job_id: int) -> bool:
+    if not _db_available:
+        return False
+    try:
+        with _Session() as s:
+            row = s.query(CaseyActiveJob).filter_by(id=job_id).first()
+            if not row:
+                return False
+            row.comms_hold = False
+            row.comms_hold_reason = None
+            row.comms_hold_set_at = None
+            s.commit()
+            return True
+    except Exception as e:
+        logger.error(f"clear_comms_hold({job_id}): {e}")
+        return False
+
+
+# --- Fix 4: duplicate send audit trail ---
+
+def increment_send_count(deal_id: str, alert_type: str) -> int:
+    """Increment send_count on today's alert record and return the new count."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if not _db_available:
+        return 0
+    try:
+        with _Session() as s:
+            row = (
+                s.query(CaseySentAlert)
+                .filter(
+                    CaseySentAlert.deal_id == deal_id,
+                    CaseySentAlert.alert_type == alert_type,
+                    CaseySentAlert.sent_at >= today_start,
+                )
+                .first()
+            )
+            if row:
+                row.send_count = (row.send_count or 1) + 1
+                s.commit()
+                return row.send_count
+        return 0
+    except Exception as e:
+        logger.error(f"DB error in increment_send_count: {e}")
+        return 0
 
 
 def is_first_run_today() -> bool:

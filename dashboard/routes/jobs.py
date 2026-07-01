@@ -1,11 +1,13 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request, Form
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from typing import Optional
 
 from db.state_store import (
     _Session, _db_available,
+    set_comms_hold, clear_comms_hold,
 )
 
 router = APIRouter()
@@ -74,6 +76,12 @@ def _get_jobs_from_db(to_start: bool) -> list[dict]:
                 "customer_email": r.customer_email or "",
                 "escalation_flag": r.escalation_flag,
                 "escalation_reason": r.escalation_reason or "",
+                "comms_hold": r.comms_hold or False,
+                "comms_hold_reason": r.comms_hold_reason or "",
+                "comms_hold_set_at": (
+                    r.comms_hold_set_at.strftime("%b %d, %Y %H:%M UTC")
+                    if r.comms_hold_set_at else ""
+                ),
                 "status": _status_for_job({
                     "escalation_flag": r.escalation_flag,
                     "last_pm_contact": r.last_pm_contact,
@@ -106,6 +114,27 @@ async def jobs_in_process(request: Request):
         "jobs": jobs,
         "empty_msg": "No jobs in progress in the local database.",
     })
+
+
+@router.post("/jobs/{job_id}/hold")
+async def hold_job(request: Request, job_id: int, reason: Optional[str] = Form(None)):
+    """Place a job on comms hold. Requires a non-empty reason."""
+    reason = (reason or "").strip()
+    if not reason:
+        # Redirect back; the modal JS already validates so this is a safety net only
+        referer = request.headers.get("referer", "/jobs/in-process")
+        return RedirectResponse(referer + "?hold_error=1", status_code=303)
+    set_comms_hold(job_id, reason)
+    referer = request.headers.get("referer", "/jobs/in-process")
+    return RedirectResponse(referer, status_code=303)
+
+
+@router.post("/jobs/{job_id}/release")
+async def release_job(request: Request, job_id: int):
+    """Remove the comms hold from a job."""
+    clear_comms_hold(job_id)
+    referer = request.headers.get("referer", "/jobs/in-process")
+    return RedirectResponse(referer, status_code=303)
 
 
 @router.post("/jobs/delete")

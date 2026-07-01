@@ -40,6 +40,7 @@
           <th class="px-4 py-3">Deposit Date</th>
           <th class="px-4 py-3">Est. Start</th>
           <th class="px-4 py-3">Status</th>
+          <th class="px-4 py-3">Hold</th>
           {% else %}
           <th class="px-4 py-3">Client</th>
           <th class="px-4 py-3">Type of Job</th>
@@ -48,6 +49,7 @@
           <th class="px-4 py-3">Last PM Contact</th>
           <th class="px-4 py-3">Contractor</th>
           <th class="px-4 py-3">Status</th>
+          <th class="px-4 py-3">Hold</th>
           {% endif %}
         </tr>
       </thead>
@@ -66,6 +68,27 @@
             <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-100">
               Pending
             </span>
+          </td>
+          <td class="px-4 py-3">
+            {% if job.comms_hold %}
+            <div>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white">HOLD</span>
+              {% if job.comms_hold_reason %}
+              <p class="text-xs text-red-700 mt-1 max-w-[160px] truncate" title="{{ job.comms_hold_reason }} — {{ job.comms_hold_set_at }}">{{ job.comms_hold_reason }}</p>
+              {% endif %}
+              {% if job.comms_hold_set_at %}
+              <p class="text-xs text-slate-400 mt-0.5">{{ job.comms_hold_set_at }}</p>
+              {% endif %}
+              <form action="/jobs/{{ job.id }}/release" method="post" class="inline mt-1">
+                <button type="submit" class="text-xs text-red-600 hover:text-red-800 underline">Release Hold</button>
+              </form>
+            </div>
+            {% else %}
+            <button onclick="openHoldModal({{ job.id }})"
+              class="text-xs font-medium text-slate-500 hover:text-red-600 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors duration-150">
+              Hold
+            </button>
+            {% endif %}
           </td>
           {% else %}
           <td class="px-4 py-3 font-medium text-slate-800">
@@ -89,6 +112,27 @@
             <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 ring-1 ring-slate-200">{{ job.status }}</span>
             {% endif %}
           </td>
+          <td class="px-4 py-3">
+            {% if job.comms_hold %}
+            <div>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white">HOLD</span>
+              {% if job.comms_hold_reason %}
+              <p class="text-xs text-red-700 mt-1 max-w-[160px] truncate" title="{{ job.comms_hold_reason }} — {{ job.comms_hold_set_at }}">{{ job.comms_hold_reason }}</p>
+              {% endif %}
+              {% if job.comms_hold_set_at %}
+              <p class="text-xs text-slate-400 mt-0.5">{{ job.comms_hold_set_at }}</p>
+              {% endif %}
+              <form action="/jobs/{{ job.id }}/release" method="post" class="inline mt-1">
+                <button type="submit" class="text-xs text-red-600 hover:text-red-800 underline">Release Hold</button>
+              </form>
+            </div>
+            {% else %}
+            <button onclick="openHoldModal({{ job.id }})"
+              class="text-xs font-medium text-slate-500 hover:text-red-600 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors duration-150">
+              Hold
+            </button>
+            {% endif %}
+          </td>
           {% endif %}
         </tr>
         {% endfor %}
@@ -109,6 +153,33 @@
 
 </div>
 
+<!-- Hold Modal -->
+<div id="hold-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full ring-1 ring-slate-900/10">
+    <h3 class="font-semibold text-slate-800 mb-1">Place Job on Hold</h3>
+    <p class="text-xs text-slate-500 mb-4">Casey will skip all processing for this job until the hold is released.</p>
+    <form id="hold-form" method="post">
+      <div class="mb-4">
+        <label class="block text-xs font-medium text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
+        <textarea id="hold-reason" name="reason" rows="3" required
+          class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 resize-none"
+          placeholder="Why is this job being placed on hold?"></textarea>
+        <p id="hold-reason-error" class="hidden text-xs text-red-600 mt-1">Reason cannot be empty.</p>
+      </div>
+      <div class="flex items-center justify-end gap-3">
+        <button type="button" onclick="closeHoldModal()"
+          class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors duration-150">
+          Cancel
+        </button>
+        <button type="submit" onclick="return validateHoldReason()"
+          class="px-5 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm transition-all duration-150">
+          Confirm Hold
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>
   document.body.addEventListener('htmx:afterRequest', function(e) {
     const path = e.detail.pathInfo && e.detail.pathInfo.requestPath;
@@ -126,6 +197,32 @@
         }
       } catch(e2) {}
     }
+  });
+
+  function openHoldModal(jobId) {
+    document.getElementById('hold-form').action = '/jobs/' + jobId + '/hold';
+    document.getElementById('hold-reason').value = '';
+    document.getElementById('hold-reason-error').classList.add('hidden');
+    document.getElementById('hold-modal').classList.remove('hidden');
+    document.getElementById('hold-reason').focus();
+  }
+
+  function closeHoldModal() {
+    document.getElementById('hold-modal').classList.add('hidden');
+  }
+
+  function validateHoldReason() {
+    const reason = document.getElementById('hold-reason').value.trim();
+    if (!reason) {
+      document.getElementById('hold-reason-error').classList.remove('hidden');
+      return false;
+    }
+    return true;
+  }
+
+  // Close modal on backdrop click
+  document.getElementById('hold-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeHoldModal();
   });
 </script>
 

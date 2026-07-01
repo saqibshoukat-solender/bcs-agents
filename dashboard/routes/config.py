@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 from fastapi import APIRouter, Request, Form
@@ -9,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from typing import Optional
 
 from db.state_store import (
-    get_all_config, set_config,
+    get_all_config, set_config, get_config,
     get_pm_list, add_pm, delete_pm,
     get_sales_rep_list, add_sales_rep, delete_sales_rep,
 )
@@ -100,6 +101,60 @@ def _sr_table_html(reps: list) -> str:
     return rows
 
 
+def _email_pause_html(paused: bool, paused_at: str) -> str:
+    """Render the Operations Controls card as an HTML fragment for htmx swaps."""
+    if paused:
+        card_class = "bg-red-50 border-2 border-red-300"
+        badge_class = "bg-red-600 text-white"
+        badge_text  = "⏸ Customer Emails PAUSED"
+        btn_text    = "▶ Resume Emails"
+        btn_class   = "bg-emerald-600 hover:bg-emerald-700 text-white"
+        desc        = "Casey will process all jobs and fire escalations, but <strong>no emails will be sent</strong> until you resume."
+    else:
+        card_class = "bg-emerald-50 border-2 border-emerald-300"
+        badge_class = "bg-emerald-600 text-white"
+        badge_text  = "▶ Customer Emails ACTIVE"
+        btn_text    = "⏸ Pause Emails"
+        btn_class   = "bg-red-600 hover:bg-red-700 text-white"
+        desc        = "Casey will send customer emails normally on its next run."
+
+    timestamp_html = ""
+    if paused_at:
+        try:
+            dt = datetime.fromisoformat(paused_at)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            timestamp_html = f'<p class="text-xs text-slate-500 mt-2">Last toggled: {dt.strftime("%b %d, %Y at %H:%M UTC")}</p>'
+        except Exception:
+            pass
+
+    return (
+        f'<div id="email-pause-controls" class="rounded-2xl p-6 {card_class}">'
+        f'<div class="flex items-start justify-between gap-4">'
+        f'<div>'
+        f'<span class="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold {badge_class}">{badge_text}</span>'
+        f'<p class="text-sm text-slate-600 mt-2">{desc}</p>'
+        f'{timestamp_html}'
+        f'</div>'
+        f'<button hx-post="/api/config/casey/toggle-emails" hx-target="#email-pause-controls" hx-swap="outerHTML"'
+        f' class="shrink-0 px-5 py-2.5 text-sm font-semibold rounded-xl shadow-sm transition-all duration-150 {btn_class}">'
+        f'{btn_text}'
+        f'</button>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+@router.post("/api/config/casey/toggle-emails", response_class=HTMLResponse)
+async def toggle_casey_emails():
+    current = (get_config("casey_emails_paused") or "true").strip().lower()
+    new_state = "false" if current == "true" else "true"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    set_config("casey_emails_paused", new_state)
+    set_config("casey_emails_paused_at", now_iso)
+    return HTMLResponse(_email_pause_html(new_state == "true", now_iso))
+
+
 @router.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request):
     db = get_all_config()
@@ -107,6 +162,10 @@ async def config_page(request: Request):
     reps = get_sales_rep_list()
     qb_connected = bool(db.get("qb_refresh_token"))
     hs_connected = bool(db.get("hubspot_access_token"))
+
+    emails_paused = (db.get("casey_emails_paused") or "true").strip().lower() == "true"
+    emails_paused_html = _email_pause_html(emails_paused, db.get("casey_emails_paused_at") or "")
+
     return templates.TemplateResponse(request, "config.html", {
         "page": "config",
         "title": "Configurations",
@@ -116,7 +175,8 @@ async def config_page(request: Request):
         "hs_connected": hs_connected,
         "qb_redirect_uri": str(request.url_for("quickbooks_oauth_callback")),
         "google_sa_email": _google_service_account_email(),
-        "cfg": db,   # all DB values — templates use cfg.key
+        "cfg": db,
+        "emails_paused_html": emails_paused_html,
     })
 
 

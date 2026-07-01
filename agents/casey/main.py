@@ -30,6 +30,7 @@ from db.state_store import (
     append_agent_run_log,
     finish_agent_run,
     set_agent_run_summary,
+    increment_send_count,
 )
 from utils.logger import get_logger
 from config.loader import cfg
@@ -299,6 +300,12 @@ def _run(run_id: "int | None" = None) -> str:
 
     JOSH_SLACK_USER_ID  = cfg("slack_josh_user_id")
     SLACK_DAILY_CHANNEL = cfg("slack_casey_channel") or "casey-daily"
+
+    # Fix 2: global email pause switch — default to paused if not yet configured
+    emails_paused = (get_config("casey_emails_paused") or "true").strip().lower() == "true"
+    if emails_paused:
+        logger.info("Casey: casey_emails_paused=true — emails will be logged but NOT sent this run")
+
     logger.info("Casey starting run")
 
     # ── Step 1: Sync sheet jobs to DB ────────────────────────────────────────
@@ -385,6 +392,14 @@ def _run(run_id: "int | None" = None) -> str:
         pm_name     = job.get("pm_name", "")
         job_id      = f"{client_name}|{pm_name}"
 
+        # Fix 3: per-customer hold — skip ALL processing (no email, no escalation, no Slack)
+        if job.get("comms_hold"):
+            hold_reason = job.get("comms_hold_reason") or "no reason recorded"
+            logger.info(f"HOLD {job_id} — reason: {hold_reason}")
+            _checkpoint(run_id, f"HOLD {job_id} — reason: {hold_reason}")
+            skipped += 1
+            continue
+
         # Idempotency: skip if already emailed today
         if _idempotent_skip(job):
             logger.info(f"SKIP {job_id} — already emailed today")
@@ -456,8 +471,10 @@ def _run(run_id: "int | None" = None) -> str:
             f"today={date.today()}"
         )
         if was_alert_sent_today(job_id, "update_due"):
-            logger.info(f"SKIP update_due already sent today {job_id}")
-            _checkpoint(run_id, f"SKIP update_due already sent today {job_id}")
+            # Fix 4: increment duplicate count and log a visible WARNING
+            count = increment_send_count(job_id, "update_due")
+            logger.warning(f"DUPLICATE BLOCKED — {client_name} already received email today (attempt #{count})")
+            _checkpoint(run_id, f"DUPLICATE BLOCKED — {client_name} already received email today (attempt #{count})")
             skipped += 1
             continue
 
@@ -480,7 +497,6 @@ def _run(run_id: "int | None" = None) -> str:
             pm_name=pm_name,
             job_type=job.get("job_type", ""),
             scenario=scenario,
-            start_date=job.get("start_date", ""),
             contractor=job.get("assigned_crew_sub", ""),
             notes=job.get("pm_communication_history", "") or job.get("pm_notes", ""),
             to_collect=job.get("to_collect", ""),
@@ -495,6 +511,12 @@ def _run(run_id: "int | None" = None) -> str:
 
         subject   = composed.get("subject", "Project Update — Blue Collar Scholars")
         body_html = composed.get("body_html", "")
+
+        # Fix 2: global email pause — log what would have been sent but do not call send_email
+        if emails_paused:
+            logger.info(f"PAUSED — would have sent [{scenario}] to {client_name} at {customer_email}")
+            _checkpoint(run_id, f"PAUSED — would have sent [{scenario}] to {client_name} at {customer_email}")
+            continue
 
         sent = send_email(
             sender_email=pm_email,
