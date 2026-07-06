@@ -148,6 +148,7 @@
             <th class="px-4 py-2.5 rounded-l-lg">Name</th>
             <th class="px-4 py-2.5">Email</th>
             <th class="px-4 py-2.5">Slack User ID</th>
+            <th class="px-4 py-2.5">Note</th>
             <th class="px-4 py-2.5 rounded-r-lg"></th>
           </tr>
         </thead>
@@ -157,6 +158,9 @@
             <td class="px-4 py-3 font-medium text-slate-800">{{ pm.full_name }}</td>
             <td class="px-4 py-3 text-slate-600">{{ pm.email }}</td>
             <td class="px-4 py-3 text-slate-500 font-mono text-xs">{{ pm.slack_user_id }}</td>
+            <td class="px-4 py-3">
+              {% if pm.display_note %}<span class="text-slate-400 italic text-xs">{{ pm.display_note }}</span>{% else %}<span class="text-slate-300 text-xs">—</span>{% endif %}
+            </td>
             <td class="px-4 py-3 text-right">
               <button hx-delete="/api/config/pm/{{ pm.id }}" hx-target="#pm-tbody" hx-swap="innerHTML"
                 hx-confirm="Delete {{ pm.full_name }}?"
@@ -176,6 +180,10 @@
             <td class="px-4 py-2">
               <input form="pm-add-form" name="slack_user_id" type="text" placeholder="U0XXXXXXX"
                 class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+            </td>
+            <td class="px-4 py-2">
+              <input form="pm-add-form" name="display_note" type="text" placeholder="e.g. Laura Arbelaez"
+                class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
             </td>
             <td class="px-4 py-2 text-right whitespace-nowrap">
               <button type="submit" form="pm-add-form"

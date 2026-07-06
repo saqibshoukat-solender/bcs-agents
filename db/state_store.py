@@ -98,6 +98,10 @@ if _db_available:
         comms_hold = Column(Boolean, nullable=False, default=False)
         comms_hold_reason = Column(Text, nullable=True)
         comms_hold_set_at = Column(DateTime(timezone=True), nullable=True)
+        # Fix 2: email thread continuity — preserve Gmail thread across Casey sends
+        last_email_thread_id  = Column(Text, nullable=True)
+        last_email_message_id = Column(Text, nullable=True)
+        last_email_subject    = Column(Text, nullable=True)
 
     class CustomerEmailHistory(Base):
         __tablename__ = "customer_email_history"
@@ -123,6 +127,7 @@ if _db_available:
         name          = Column(String)
         email         = Column(String)
         slack_user_id = Column(String)
+        display_note  = Column(Text, nullable=True)
 
     class SalesRepConfig(Base):
         __tablename__ = "sales_rep_config"
@@ -196,6 +201,9 @@ def _row_to_dict(row: "CaseyActiveJob") -> dict:
         "comms_hold": row.comms_hold or False,
         "comms_hold_reason": row.comms_hold_reason,
         "comms_hold_set_at": row.comms_hold_set_at,
+        "last_email_thread_id": row.last_email_thread_id,
+        "last_email_message_id": row.last_email_message_id,
+        "last_email_subject": row.last_email_subject,
     }
 
 
@@ -228,6 +236,11 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS comms_hold_set_at TIMESTAMP WITH TIME ZONE"))
             # Fix 4: duplicate send audit trail
             conn.execute(text("ALTER TABLE casey_sent_alerts ADD COLUMN IF NOT EXISTS send_count INTEGER NOT NULL DEFAULT 1"))
+            # Fix 2 (thread continuity) + Fix 3 (Fernanda display_note)
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_thread_id TEXT"))
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_message_id TEXT"))
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_subject TEXT"))
+            conn.execute(text("ALTER TABLE pm_config ADD COLUMN IF NOT EXISTS display_note TEXT"))
             conn.commit()
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
@@ -253,6 +266,20 @@ def init_db() -> None:
                         {"k": key, "v": default_val},
                     )
             conn.commit()
+
+            # Fix 3: ensure "Fernanda" PM entry exists (Laura Arbelaez goes by Fernanda)
+            fernanda_exists = conn.execute(
+                text("SELECT id FROM pm_config WHERE email = 'laura.a@bluecollarscholars.net'")
+            ).fetchone()
+            if not fernanda_exists:
+                conn.execute(
+                    text(
+                        "INSERT INTO pm_config (name, email, slack_user_id, display_note) "
+                        "VALUES ('Fernanda', 'laura.a@bluecollarscholars.net', '', 'Laura Arbelaez')"
+                    )
+                )
+                conn.commit()
+                logger.info("Seeded Fernanda (Laura Arbelaez) PM entry")
 
             # One-time migration: the Gmail history cache predates the
             # [BCS Update] subject filter, so it may contain Casey's own
@@ -328,7 +355,13 @@ def get_pm_list() -> list:
     try:
         with _Session() as s:
             return [
-                {"id": r.id, "full_name": r.name, "email": r.email, "slack_user_id": r.slack_user_id}
+                {
+                    "id": r.id,
+                    "full_name": r.name,
+                    "email": r.email,
+                    "slack_user_id": r.slack_user_id,
+                    "display_note": r.display_note or "",
+                }
                 for r in s.query(PmConfig).order_by(PmConfig.id).all()
             ]
     except Exception as e:
@@ -336,12 +369,17 @@ def get_pm_list() -> list:
         return []
 
 
-def add_pm(name: str, email: str, slack_user_id: str) -> None:
+def add_pm(name: str, email: str, slack_user_id: str, display_note: str = "") -> None:
     if not _db_available:
         return
     try:
         with _Session() as s:
-            s.add(PmConfig(name=name, email=email, slack_user_id=slack_user_id))
+            s.add(PmConfig(
+                name=name,
+                email=email,
+                slack_user_id=slack_user_id,
+                display_note=display_note or None,
+            ))
             s.commit()
     except Exception as e:
         logger.error(f"add_pm: {e}")
@@ -1384,6 +1422,35 @@ def increment_send_count(deal_id: str, alert_type: str) -> int:
     except Exception as e:
         logger.error(f"DB error in increment_send_count: {e}")
         return 0
+
+
+def save_email_thread_ids(
+    client_name: str,
+    pm_name: str,
+    thread_id: str,
+    message_id: str,
+    subject: str,
+) -> None:
+    """Persist Gmail thread continuity data on the active job row after a successful send."""
+    if not _db_available:
+        key = (client_name, pm_name or "")
+        if key in _memory_jobs:
+            _memory_jobs[key]["last_email_thread_id"] = thread_id
+            _memory_jobs[key]["last_email_message_id"] = message_id
+            _memory_jobs[key]["last_email_subject"] = subject
+        return
+    try:
+        with _Session() as s:
+            row = s.query(CaseyActiveJob).filter_by(
+                client_name=client_name, pm_name=pm_name or ""
+            ).first()
+            if row:
+                row.last_email_thread_id = thread_id or None
+                row.last_email_message_id = message_id or None
+                row.last_email_subject = subject or None
+                s.commit()
+    except Exception as e:
+        logger.error(f"save_email_thread_ids({client_name}): {e}")
 
 
 def is_first_run_today() -> bool:

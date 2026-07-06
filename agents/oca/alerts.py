@@ -9,6 +9,14 @@ logger = get_logger("oca.alerts")
 
 _JOSH_SLACK_USER_ID: str = os.getenv("JOSH_SLACK_USER_ID", "")
 
+
+def normalize_pm_name(pm_name: str) -> str:
+    """Normalize PM name for consistent matching; handles casing variants like FERNANDA."""
+    name = pm_name.strip().title()
+    if name.upper() == "FERNANDA":
+        return "Fernanda"
+    return name
+
 _FLAG_TYPE_LABELS = {
     "stale_record":     "Stale Job Record",
     "missing_pm":       "Missing PM Assignment",
@@ -72,8 +80,9 @@ def _post(channel: str, text: str) -> None:
 
 
 def _lookup_pm_slack_id(pm_name: str, pm_config: list) -> str:
+    normalized = normalize_pm_name(pm_name)
     for pm in pm_config:
-        if pm.get("full_name") == pm_name:
+        if normalize_pm_name(pm.get("full_name", "")) == normalized:
             return pm.get("slack_user_id", "")
     return ""
 

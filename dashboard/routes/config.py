@@ -41,11 +41,14 @@ def _pm_table_html(pms: list) -> str:
     rows = ""
     for pm in pms:
         pid, name, email, slack = pm["id"], pm["full_name"], pm["email"], pm["slack_user_id"]
+        note = pm.get("display_note") or ""
+        note_cell = f'<span class="text-slate-400 italic text-xs">{note}</span>' if note else '<span class="text-slate-300 text-xs">—</span>'
         rows += (
             f'<tr class="hover:bg-slate-50/80 transition-colors duration-100">'
             f'<td class="px-4 py-3 font-medium text-slate-800">{name}</td>'
             f'<td class="px-4 py-3 text-slate-600">{email}</td>'
             f'<td class="px-4 py-3 text-slate-500 font-mono text-xs">{slack}</td>'
+            f'<td class="px-4 py-3">{note_cell}</td>'
             f'<td class="px-4 py-3 text-right">'
             f'<button hx-delete="/api/config/pm/{pid}" hx-target="#pm-tbody" hx-swap="innerHTML"'
             f' hx-confirm="Delete {name}?"'
@@ -61,6 +64,8 @@ def _pm_table_html(pms: list) -> str:
         ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
         '<td class="px-4 py-2"><input form="pm-add-form" name="slack_user_id" type="text" placeholder="U0XXXXXXX"'
         ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
+        '<td class="px-4 py-2"><input form="pm-add-form" name="display_note" type="text" placeholder="e.g. Laura Arbelaez"'
+        ' class="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"/></td>'
         '<td class="px-4 py-2 text-right whitespace-nowrap">'
         '<button type="submit" form="pm-add-form" class="px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md mr-1">Add</button>'
         '<button type="button" onclick="hideAddRow(\'pm\')" class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-md">Cancel</button>'
@@ -378,9 +383,10 @@ async def api_add_pm(
     full_name:     Optional[str] = Form(None),
     email:         Optional[str] = Form(None),
     slack_user_id: Optional[str] = Form(None),
+    display_note:  Optional[str] = Form(None),
 ):
     if full_name:
-        add_pm(full_name, email or "", slack_user_id or "")
+        add_pm(full_name, email or "", slack_user_id or "", display_note or "")
     return HTMLResponse(_pm_table_html(get_pm_list()))
 
 

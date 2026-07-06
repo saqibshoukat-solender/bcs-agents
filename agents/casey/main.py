@@ -31,6 +31,7 @@ from db.state_store import (
     finish_agent_run,
     set_agent_run_summary,
     increment_send_count,
+    save_email_thread_ids,
 )
 from utils.logger import get_logger
 from config.loader import cfg
@@ -61,12 +62,21 @@ MOCK_JOB = {
 }
 
 
+def normalize_pm_name(pm_name: str) -> str:
+    """Normalize PM name for consistent matching; handles casing variants like FERNANDA."""
+    name = pm_name.strip().title()
+    if name.upper() == "FERNANDA":
+        return "Fernanda"
+    return name
+
+
 def _get_pm_email(pm_name: str) -> str:
     """Look up PM's email from pm_config table."""
+    normalized = normalize_pm_name(pm_name)
     try:
         from db.state_store import get_pm_list
         for pm in get_pm_list():
-            if pm.get("full_name", "").strip().lower() == pm_name.strip().lower():
+            if normalize_pm_name(pm.get("full_name", "")) == normalized:
                 return pm.get("email", "")
     except Exception:
         pass
@@ -306,6 +316,14 @@ def _run(run_id: "int | None" = None) -> str:
     if emails_paused:
         logger.info("Casey: casey_emails_paused=true — emails will be logged but NOT sent this run")
 
+    # Fix 1: weekends always skipped — BCS operates Mon-Fri Eastern Time
+    from zoneinfo import ZoneInfo
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    if now_et.weekday() in (5, 6):
+        logger.info("Casey weekend skip — no customer emails sent on weekends")
+        send_message(SLACK_DAILY_CHANNEL, "ℹ️ Casey run skipped — no customer emails are sent on weekends.")
+        return "Weekend skip — no emails sent"
+
     logger.info("Casey starting run")
 
     # ── Step 1: Sync sheet jobs to DB ────────────────────────────────────────
@@ -512,24 +530,34 @@ def _run(run_id: "int | None" = None) -> str:
         subject   = composed.get("subject", "Project Update — Blue Collar Scholars")
         body_html = composed.get("body_html", "")
 
+        # Fix 2: thread continuity — reuse the original subject so Gmail groups messages
+        prior_thread_id  = job.get("last_email_thread_id") or ""
+        prior_message_id = job.get("last_email_message_id") or ""
+        prior_subject    = job.get("last_email_subject") or ""
+        if prior_thread_id and prior_subject:
+            subject = prior_subject
+
         # Fix 2: global email pause — log what would have been sent but do not call send_email
         if emails_paused:
             logger.info(f"PAUSED — would have sent [{scenario}] to {client_name} at {customer_email}")
             _checkpoint(run_id, f"PAUSED — would have sent [{scenario}] to {client_name} at {customer_email}")
             continue
 
-        sent = send_email(
+        sent, returned_thread_id, returned_message_id = send_email(
             sender_email=pm_email,
             to_email=customer_email,
             subject=subject,
             body_html=body_html,
             cc_email=cc_email,
+            thread_id=prior_thread_id,
+            message_id=prior_message_id,
         )
 
         if sent:
             next_update = date.today() + timedelta(days=7)
             set_update_sent(client_name, pm_name)
             record_alert_sent(job_id, "update_due", client_name)
+            save_email_thread_ids(client_name, pm_name, returned_thread_id, returned_message_id, subject)
             _write_email_to_hubspot(job, scenario, subject, next_update_date=next_update)
             logger.info(f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
             _checkpoint(run_id, f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
