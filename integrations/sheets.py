@@ -149,10 +149,15 @@ def is_valid_pm(pm_name: str, pm_config: list) -> bool:
     Used by OCA's check_missing_pm to flag jobs with no recognised PM, and by
     Casey to decide whether a job has someone to send the customer-update email as.
     """
-    name = (pm_name or "").strip()
+    name = (pm_name or "").strip().title()
     if not name:
         return False
-    return any(pm.get("full_name", "") == name for pm in pm_config)
+    if name.upper() == "FERNANDA":
+        name = "Fernanda"
+    return any(
+        pm.get("full_name", "").strip().title() == name
+        for pm in pm_config
+    )
 
 
 def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
