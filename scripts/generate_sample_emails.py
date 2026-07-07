@@ -135,41 +135,6 @@ def _is_eligible(job: dict, pm_list: list) -> bool:
     return True
 
 
-def _pre_classify(job: dict) -> str:
-    """
-    Classify a job's likely scenario using DB fields only (no QB call).
-    invoice_reminder is simulated: to_collect non-empty + deposit > 60 days old.
-    new_job_intro check mirrors the override in agents/casey/main.py.
-    """
-    # new_job_intro: never emailed, fresh deposit (within 14 days)
-    if (job.get("last_customer_update_sent") is None
-            and job.get("next_scheduled_update") is None):
-        deposit = parse_latest_date(job.get("deposit_date", ""))
-        if deposit and 0 <= (date.today() - deposit).days <= 14:
-            return "new_job_intro"
-
-    # invoice_reminder simulation (QB may not be available)
-    to_collect = job.get("to_collect", "").strip()
-    if to_collect:
-        deposit = parse_latest_date(job.get("deposit_date", ""))
-        if deposit and (date.today() - deposit).days >= 60:
-            return "invoice_reminder"
-
-    # in_progress
-    if job.get("assigned_crew_sub", "").strip():
-        return "in_progress"
-    start_str = job.get("start_date", "").strip()
-    if start_str:
-        try:
-            start = datetime.strptime(start_str, "%Y-%m-%d").date()
-            if start <= date.today():
-                return "in_progress"
-        except Exception:
-            pass
-
-    return "not_started"
-
-
 # ---------------------------------------------------------------------------
 # Job selection
 # ---------------------------------------------------------------------------
@@ -177,8 +142,14 @@ def _pre_classify(job: dict) -> str:
 def select_jobs(pm_list: list, total: int = TOTAL) -> list[dict]:
     """
     Load all active jobs, filter for eligibility, and pick a balanced set
-    that covers all 4 email scenarios. Falls back to any surplus eligible
-    jobs if a bucket has fewer than its target.
+    that covers all 4 email scenarios.
+
+    Bucketing uses _determine_scenario() directly — the exact same function
+    that runs at composition time — so selection and composition always agree.
+    Two special cases that _determine_scenario() cannot handle without QB data
+    are applied first as overrides:
+      - invoice_reminder: to_collect set + deposit older than 60 days
+      - new_job_intro:    never emailed + deposit within 14 days
     """
     all_jobs = get_all_active_jobs()
 
@@ -190,22 +161,39 @@ def select_jobs(pm_list: list, total: int = TOTAL) -> list[dict]:
 
     eligible = [j for j in all_jobs if _is_eligible(j, pm_list)]
 
-    # Tag and bucket
     buckets: dict[str, list[dict]] = {
         "in_progress": [], "not_started": [],
         "invoice_reminder": [], "new_job_intro": [],
     }
+
     for job in eligible:
-        sc = _pre_classify(job)
-        job["_pre_scenario"] = sc
-        buckets[sc].append(job)
+        deposit = parse_latest_date(job.get("deposit_date", ""))
+        days_deposit = (date.today() - deposit).days if deposit else None
+        to_collect   = job.get("to_collect", "").strip()
 
-    print(f"  Eligible jobs by pre-classified scenario:")
+        # invoice_reminder: simulate since QB may not be connected
+        if to_collect and days_deposit is not None and days_deposit >= 60:
+            sc = "invoice_reminder"
+            job["_invoice_simulated"] = True
+
+        # new_job_intro: mirrors casey/main.py override
+        elif (job.get("last_customer_update_sent") is None
+              and job.get("next_scheduled_update") is None
+              and days_deposit is not None and 0 <= days_deposit <= 14):
+            sc = "new_job_intro"
+
+        # in_progress / not_started: use exact same function as composition
+        else:
+            sc = _determine_scenario(job)
+
+        job["_selected_scenario"] = sc
+        buckets.get(sc, buckets["not_started"]).append(job)
+
+    print("  Eligible jobs by scenario:")
     for sc, jobs in buckets.items():
-        target = _TARGETS[sc]
-        print(f"    {sc:<20} {len(jobs):>3} available  (target: {target})")
+        print(f"    {sc:<20} {len(jobs):>3} available  (target: {_TARGETS[sc]})")
 
-    # Pick up to target from each bucket (preserving order = priority)
+    # Pick up to target from each bucket (preserving sort order = priority)
     selected: list[dict] = []
     selected_ids: set = set()
 
@@ -238,9 +226,10 @@ def select_jobs(pm_list: list, total: int = TOTAL) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def build_email_record(job: dict, idx: int, total: int, pm_list: list) -> dict:
-    client_name  = job["client_name"]
-    pm_name      = job.get("pm_name", "")
-    pre_scenario = job.get("_pre_scenario", "")
+    client_name       = job["client_name"]
+    pm_name           = job.get("pm_name", "")
+    selected_scenario = job.get("_selected_scenario", "")
+    invoice_simulated = job.get("_invoice_simulated", False)
 
     record = {
         "idx":               idx,
@@ -285,23 +274,23 @@ def build_email_record(job: dict, idx: int, total: int, pm_list: list) -> dict:
     job["qb_invoice_status"] = qb_status
 
     # ── Scenario determination ───────────────────────────────────────────────
-    scenario = _determine_scenario(job)
-
-    # new_job_intro: override when QB didn't change the classification
-    # (mirrors the check in agents/casey/main.py that runs after _determine_scenario)
-    if pre_scenario == "new_job_intro" and scenario not in ("invoice_reminder",):
+    # For invoice_reminder and new_job_intro the selection applied overrides
+    # that _determine_scenario() cannot make without QB data — honour them here.
+    # For in_progress / not_started _determine_scenario() was used at selection
+    # time too, so calling it again is guaranteed to agree.
+    if selected_scenario == "invoice_reminder" and invoice_simulated:
+        scenario = "invoice_reminder"
+        record["notes"].append(
+            "invoice_reminder (simulated — QB not connected; "
+            "to_collect is set and deposit is >60 days old)"
+        )
+    elif selected_scenario == "new_job_intro":
         scenario = "new_job_intro"
         record["notes"].append(
             "new_job_intro: first Casey email for this job, deposit received within 14 days"
         )
-
-    # invoice_reminder: inject simulated status when QB is not confirming overdue
-    if pre_scenario == "invoice_reminder" and scenario != "invoice_reminder":
-        scenario = "invoice_reminder"
-        record["notes"].append(
-            "invoice_reminder simulated — QB not confirming overdue; "
-            "selected because to_collect is set and deposit is >60 days old"
-        )
+    else:
+        scenario = _determine_scenario(job)
 
     record["scenario"] = scenario
 
@@ -541,7 +530,7 @@ def main():
     print(f"\nSelected {len(jobs)} jobs. Composing emails (LLM calls in progress)...\n")
     records: list[dict] = []
     for i, job in enumerate(jobs, 1):
-        sc_label = job.get("_pre_scenario", "?")
+        sc_label = job.get("_selected_scenario", "?")
         print(f"  [{i:>2}/{len(jobs)}] {job['client_name']:<35} scenario={sc_label}  pm={job.get('pm_name','')}")
         records.append(build_email_record(job, i, len(jobs), pm_list))
 
