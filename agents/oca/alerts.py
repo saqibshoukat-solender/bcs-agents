@@ -3,11 +3,9 @@ from typing import Any
 
 from utils.logger import get_logger
 from config.loader import cfg
-from integrations.slack import send_dm, send_message
+from integrations.slack import send_message
 
 logger = get_logger("oca.alerts")
-
-_JOSH_SLACK_USER_ID: str = os.getenv("JOSH_SLACK_USER_ID", "")
 
 
 def normalize_pm_name(pm_name: str) -> str:
@@ -17,13 +15,15 @@ def normalize_pm_name(pm_name: str) -> str:
         return "Fernanda"
     return name
 
+
 _FLAG_TYPE_LABELS = {
-    "stale_record":     "Stale Job Record",
-    "missing_pm":       "Missing PM Assignment",
-    "unconfirmed_crew": "Unconfirmed Crew/Sub",
-    "dropped_invoice":  "Dropped Invoice Follow-up",
-    "readiness_sync":   "HubSpot Sync Issue",
-    "deal_not_found":   "Deal Not Found in HubSpot",
+    "stale_record":         "Stale Job Record",
+    "missing_pm":           "Missing PM Assignment",
+    "unconfirmed_crew":     "Unconfirmed Crew/Sub",
+    "dropped_invoice":      "Dropped Invoice Follow-up",
+    "readiness_sync":       "HubSpot Sync Issue",
+    "deal_not_found":       "Deal Not Found in HubSpot",
+    "approaching_deadline": "Approaching 7-Day Deadline",
 }
 
 _URGENCY_EMOJI = {
@@ -52,6 +52,14 @@ def _hubspot_deal_url(deal_id: str) -> str:
     return f"https://app.hubspot.com/contacts/{portal_id}/deal/{deal_id}"
 
 
+def _get_urgentmatters_channel() -> str:
+    return cfg("slack_urgentmatters_channel") or "urgentmatters"
+
+
+def _route(message: str) -> None:
+    send_message(_get_urgentmatters_channel(), message)
+
+
 def build_alert_message(flag: dict[str, Any]) -> str:
     flag_type = flag.get("flag_type", "")
     label = _FLAG_TYPE_LABELS.get(flag_type, flag_type)
@@ -71,56 +79,8 @@ def build_alert_message(flag: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _dm(user_id: str, text: str, pm_name: str = "") -> None:
-    send_dm(user_id, text, pm_name=pm_name)
-
-
-def _post(channel: str, text: str) -> None:
-    send_message(channel, text)
-
-
-def _lookup_pm_slack_id(pm_name: str, pm_config: list) -> str:
-    normalized = normalize_pm_name(pm_name)
-    for pm in pm_config:
-        if normalize_pm_name(pm.get("full_name", "")) == normalized:
-            return pm.get("slack_user_id", "")
-    return ""
-
-
-def _route(
-    message: str,
-    urgency: str,
-    pm_name: str,
-    pm_config: list,
-    josh_slack_id: str,
-    sam_slack_id: str,
-) -> None:
-    pm_slack_id = _lookup_pm_slack_id(pm_name, pm_config)
-
-    if urgency == "urgent":
-        _dm(josh_slack_id, message)
-        if pm_slack_id:
-            _dm(pm_slack_id, message, pm_name=pm_name)
-    elif urgency == "warning":
-        if pm_slack_id:
-            _dm(pm_slack_id, message, pm_name=pm_name)
-        else:
-            _dm(josh_slack_id, message)
-    else:  # info
-        oca_channel = os.getenv("SLACK_OCA_CHANNEL", "oca-alerts")
-        _post(oca_channel, message)
-
-
-def route_alert(
-    flag: dict[str, Any],
-    pm_config: list,
-    josh_slack_id: str,
-    sam_slack_id: str,
-) -> None:
-    message = build_alert_message(flag)
-    urgency = flag.get("urgency", "info")
-    pm_name = flag.get("pm_name", "")
-    _route(message, urgency, pm_name, pm_config, josh_slack_id, sam_slack_id)
+def route_alert(flag: dict[str, Any]) -> None:
+    _route(build_alert_message(flag))
 
 
 def build_combined_alert_message(job_flags: list[dict[str, Any]]) -> str:
@@ -151,16 +111,8 @@ def build_combined_alert_message(job_flags: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def route_combined_alert(
-    job_flags: list[dict[str, Any]],
-    pm_config: list,
-    josh_slack_id: str,
-    sam_slack_id: str,
-) -> None:
-    message = build_combined_alert_message(job_flags)
-    urgency = _highest_urgency(job_flags)
-    pm_name = job_flags[0].get("pm_name", "")
-    _route(message, urgency, pm_name, pm_config, josh_slack_id, sam_slack_id)
+def route_combined_alert(job_flags: list[dict[str, Any]]) -> None:
+    _route(build_combined_alert_message(job_flags))
 
 
 def build_unresolved_warning_message(flag: dict[str, Any], hours_open: int) -> str:
@@ -174,13 +126,8 @@ def build_unresolved_warning_message(flag: dict[str, Any], hours_open: int) -> s
     )
 
 
-def escalate_unresolved_warning(
-    flag: dict[str, Any],
-    hours_open: int,
-    josh_slack_id: str,
-) -> None:
-    message = build_unresolved_warning_message(flag, hours_open)
-    _dm(josh_slack_id, message)
+def escalate_unresolved_warning(flag: dict[str, Any], hours_open: int) -> None:
+    _route(build_unresolved_warning_message(flag, hours_open))
 
 
 def build_deal_not_found_message(flag: dict[str, Any]) -> str:
@@ -194,12 +141,8 @@ def build_deal_not_found_message(flag: dict[str, Any]) -> str:
     )
 
 
-def send_deal_not_found_alert(
-    flag: dict[str, Any],
-    josh_slack_id: str,
-) -> None:
-    message = build_deal_not_found_message(flag)
-    _dm(josh_slack_id, message)
+def send_deal_not_found_alert(flag: dict[str, Any]) -> None:
+    _route(build_deal_not_found_message(flag))
 
 
 def build_no_email_history_message(
@@ -222,10 +165,8 @@ def send_no_email_history_alert(
     pm_name: str,
     pm_email: str,
     customer_email: str,
-    josh_slack_id: str,
 ) -> None:
-    message = build_no_email_history_message(client_name, pm_name, pm_email, customer_email)
-    _dm(josh_slack_id, message)
+    _route(build_no_email_history_message(client_name, pm_name, pm_email, customer_email))
 
 
 def build_deadline_change_message(
@@ -252,50 +193,39 @@ def send_deadline_change_alert(
     old_deadline: str,
     new_deadline: str,
     deal_id: "str | None",
-    josh_slack_id: str,
 ) -> None:
-    message = build_deadline_change_message(client_name, pm_name, old_deadline, new_deadline, deal_id)
-    _dm(josh_slack_id, message)
+    _route(build_deadline_change_message(client_name, pm_name, old_deadline, new_deadline, deal_id))
 
 
-def send_daily_digest(
-    active_flags_summary: dict[str, int],
-    sam_slack_id: str,
-) -> None:
-    stale = active_flags_summary.get("stale", 0)
-    missing_pm = active_flags_summary.get("missing_pm", 0)
-    unconfirmed = active_flags_summary.get("unconfirmed_crew", 0)
-    dropped = active_flags_summary.get("dropped_invoice", 0)
-    sync = active_flags_summary.get("readiness_sync", 0)
+def send_approaching_deadline_notifications(approaching_jobs: list[dict[str, Any]]) -> None:
+    """Send one combined Slack message to #urgentmatters and one email to Chris for jobs at day 6."""
+    if not approaching_jobs:
+        return
 
-    urgent_count = stale + missing_pm + unconfirmed
-    warning_count = dropped
-    info_count = sync
-    total = urgent_count + warning_count + info_count
+    lines = ["⏰ *Approaching 7-Day PM Contact Deadline — Action Required*", ""]
+    for job in approaching_jobs:
+        client_name = job.get("client_name", "Unknown")
+        pm_name = job.get("pm_name", "Unassigned")
+        days = job.get("days_since_contact", 6)
+        lines.append(f"• {client_name} (PM: {pm_name}) — {days} days since last contact")
+    lines.append("")
+    lines.append("These jobs will trigger Casey's backstop email tomorrow if the PM makes no contact today.")
 
-    message = (
-        f"📊 *OCA Daily Digest*\n"
-        f"Active flags:\n"
-        f"🔴 Urgent: {urgent_count}\n"
-        f"🟡 Warnings: {warning_count}\n"
-        f"🔵 Info: {info_count}\n"
-        f"Total active issues: {total}"
-    )
-    recipient = sam_slack_id
-    if not recipient:
-        logger.warning("SAM_SLACK_USER_ID not set — sending daily digest to Josh instead")
-        recipient = _JOSH_SLACK_USER_ID
-    _dm(recipient, message)
+    send_message(_get_urgentmatters_channel(), "\n".join(lines))
 
+    chris_email = cfg("chris_notification_email") or ""
+    sender_email = cfg("notification_sender_email") or ""
+    if not chris_email:
+        return
+    if not sender_email:
+        logger.warning("send_approaching_deadline_notifications: notification_sender_email not configured — skipping Chris email")
+        return
 
-def send_weekly_summary(
-    weekly_data: dict[str, int],
-    josh_slack_id: str,
-) -> None:
-    message = (
-        f"📅 *OCA Weekly Summary*\n"
-        f"Flags raised this week: {weekly_data.get('raised', 0)}\n"
-        f"Flags resolved this week: {weekly_data.get('resolved', 0)}\n"
-        f"Still active: {weekly_data.get('active', 0)}"
-    )
-    _dm(josh_slack_id, message)
+    try:
+        from integrations.gmail import send_email
+        count = len(approaching_jobs)
+        subject = f"Approaching Deadline — {count} job{'s' if count != 1 else ''} at day 6 of PM contact gap"
+        body_html = "<br>".join(line.replace("*", "<b>", 1).replace("*", "</b>", 1) if "*" in line else line for line in lines)
+        send_email(sender_email=sender_email, to_email=chris_email, subject=subject, body_html=f"<p>{body_html}</p>")
+    except Exception as e:
+        logger.warning(f"send_approaching_deadline_notifications: failed to email Chris: {e}")

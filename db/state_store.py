@@ -255,6 +255,13 @@ def init_db() -> None:
                 # out accidentally on first deploy; admin must explicitly activate.
                 "casey_emails_paused":    "true",
                 "casey_emails_paused_at": "",
+                # Notification routing — all agent alerts go to this Slack channel
+                "slack_urgentmatters_channel":  "urgentmatters",
+                # Chris notification email — receives pre-send and step-in alerts
+                "chris_notification_email":     "chris.s@bluecollarscholars.net",
+                # Sender address used when emailing Chris (must be a Google Workspace
+                # account covered by the service account's domain-wide delegation)
+                "notification_sender_email":    "",
             }
             for key, default_val in _hs_defaults.items():
                 existing = conn.execute(

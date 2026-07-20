@@ -324,17 +324,23 @@ async def save_hubspot(
 
 @router.post("/api/config/slack", response_class=HTMLResponse)
 async def save_slack(
-    bot_token:     Optional[str] = Form(None),
-    josh_id:       Optional[str] = Form(None),
-    sam_id:        Optional[str] = Form(None),
-    oca_channel:   Optional[str] = Form(None),
-    daily_channel: Optional[str] = Form(None),
+    bot_token:              Optional[str] = Form(None),
+    josh_id:                Optional[str] = Form(None),
+    sam_id:                 Optional[str] = Form(None),
+    oca_channel:            Optional[str] = Form(None),
+    daily_channel:          Optional[str] = Form(None),
+    urgentmatters_channel:  Optional[str] = Form(None),
+    chris_notification_email:   Optional[str] = Form(None),
+    notification_sender_email:  Optional[str] = Form(None),
 ):
-    if bot_token:     set_config("slack_bot_token",     bot_token)
-    if josh_id:       set_config("slack_josh_user_id",  josh_id)
-    if sam_id:        set_config("slack_sam_user_id",   sam_id)
-    if oca_channel:   set_config("slack_oca_channel",   oca_channel)
-    if daily_channel: set_config("slack_casey_channel", daily_channel)
+    if bot_token:                    set_config("slack_bot_token",              bot_token)
+    if josh_id:                      set_config("slack_josh_user_id",           josh_id)
+    if sam_id:                       set_config("slack_sam_user_id",            sam_id)
+    if oca_channel:                  set_config("slack_oca_channel",            oca_channel)
+    if daily_channel:                set_config("slack_casey_channel",          daily_channel)
+    if urgentmatters_channel:        set_config("slack_urgentmatters_channel",  urgentmatters_channel)
+    if chris_notification_email:     set_config("chris_notification_email",     chris_notification_email)
+    if notification_sender_email:    set_config("notification_sender_email",    notification_sender_email)
     return HTMLResponse(_toast("Slack settings saved"))
 
 

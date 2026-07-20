@@ -264,3 +264,31 @@ def check_job_readiness(
         ))
     logger.info(f"check_job_readiness: {len(flags)} flags")
     return flags
+
+
+def check_approaching_deadline(sheet_jobs: list, contact_date_map: "dict | None" = None) -> list[dict[str, Any]]:
+    """Flag jobs where last PM contact was exactly 6 days ago — one day before Casey's 7-day backstop trigger."""
+    contact_date_map = contact_date_map or {}
+    today = date.today()
+    approaching = []
+    for job in sheet_jobs:
+        client_name = job["client_name"]
+        pm_name = job.get("pm_name", "")
+
+        last_contact = contact_date_map.get(client_name)
+        if last_contact is None:
+            continue
+
+        days_since = (today - last_contact).days
+        if days_since != 6:
+            continue
+
+        approaching.append({
+            "client_name":        client_name,
+            "pm_name":            pm_name,
+            "days_since_contact": days_since,
+            "last_contact_date":  str(last_contact),
+            "job_id":             f"{client_name}|{pm_name}",
+        })
+    logger.info(f"check_approaching_deadline: {len(approaching)} jobs approaching 7-day threshold")
+    return approaching

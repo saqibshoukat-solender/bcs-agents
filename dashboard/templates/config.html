@@ -409,6 +409,9 @@
         {{ text_field('sam_id', 'Sam Slack User ID', cfg.get('slack_sam_user_id',''), 'U0XXXXXXXXX') }}
         {{ text_field('oca_channel', 'OCA Alerts Channel', cfg.get('slack_oca_channel',''), 'oca-alerts') }}
         {{ text_field('daily_channel', 'Casey Daily Channel', cfg.get('slack_casey_channel',''), 'casey-daily') }}
+        {{ text_field('urgentmatters_channel', '#urgentmatters Channel', cfg.get('slack_urgentmatters_channel','urgentmatters'), 'urgentmatters') }}
+        {{ text_field('chris_notification_email', 'Chris Notification Email', cfg.get('chris_notification_email',''), 'chris.s@bluecollarscholars.net') }}
+        {{ text_field('notification_sender_email', 'Notification Sender Email', cfg.get('notification_sender_email',''), 'pm@bluecollarscholars.net') }}
       </div>
       <button type="submit"
         class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-150">

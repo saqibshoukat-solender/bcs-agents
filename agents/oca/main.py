@@ -9,17 +9,17 @@ from agents.oca.checks import (
     check_unconfirmed_crew,
     check_dropped_invoices,
     check_job_readiness,
+    check_approaching_deadline,
     _flag,
 )
 from agents.oca.alerts import (
     route_alert,
     route_combined_alert,
-    send_daily_digest,
-    send_weekly_summary,
     escalate_unresolved_warning,
     send_deal_not_found_alert,
     send_deadline_change_alert,
     send_no_email_history_alert,
+    send_approaching_deadline_notifications,
 )
 from db.state_store import (
     init_db,
@@ -30,9 +30,6 @@ from db.state_store import (
     get_flag_alert_age_hours,
     resolve_flag,
     resolve_flags_not_in,
-    get_active_flags_summary,
-    get_weekly_summary,
-    is_first_run_today,
     upsert_active_job,
     set_config,
     get_config,
@@ -46,7 +43,7 @@ from db.state_store import (
     finish_agent_run,
     set_agent_run_summary,
 )
-from integrations.slack import send_dm
+from integrations.slack import send_message
 from integrations.sheets import get_active_jobs, parse_latest_date
 from integrations.gmail import get_pm_customer_email_history
 from integrations.hubspot import (
@@ -79,6 +76,7 @@ _ALL_FLAG_TYPES = [
     "dropped_invoice",
     "readiness_sync",
     "deal_not_found",
+    "approaching_deadline",
 ]
 
 
@@ -96,7 +94,7 @@ def _get_hs_custom_field_map() -> dict:
     return result
 
 
-def _sync_all(sheet_jobs: list, hs_deals: list, josh_slack_id: str) -> dict:
+def _sync_all(sheet_jobs: list, hs_deals: list) -> dict:
     """
     OCA sync: keep Google Sheet, HubSpot, and local DB aligned.
 
@@ -225,8 +223,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list, josh_slack_id: str) -> dict:
         new_deadline = (job.get("deadline_to_start") or "").strip()
         if old_deadline and new_deadline and old_deadline != new_deadline:
             send_deadline_change_alert(
-                client_name, pm_name, old_deadline, new_deadline,
-                hubspot_deal_id, josh_slack_id,
+                client_name, pm_name, old_deadline, new_deadline, hubspot_deal_id,
             )
             logger.info(f"Deadline change: {client_name} {old_deadline} → {new_deadline}")
 
@@ -276,7 +273,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list, josh_slack_id: str) -> dict:
     }
 
 
-def _fetch_email_histories(sheet_jobs: list, pm_config: list, josh_slack_id: str) -> None:
+def _fetch_email_histories(sheet_jobs: list, pm_config: list) -> None:
     """
     Fetch and cache each job's PM→customer Gmail sent-history.
 
@@ -337,10 +334,10 @@ def _fetch_email_histories(sheet_jobs: list, pm_config: list, josh_slack_id: str
             if flag_exists(job_id, flag_type):
                 if should_alert_again(job_id, flag_type, cooldown_hours=24):
                     update_flag_alerted(job_id, flag_type)
-                    send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, josh_slack_id)
+                    send_no_email_history_alert(client_name, pm_name, pm_email, customer_email)
             else:
                 create_flag(job_id, flag_type, f"No emails found in {pm_email} sent folder to {customer_email}", "warning")
-                send_no_email_history_alert(client_name, pm_name, pm_email, customer_email, josh_slack_id)
+                send_no_email_history_alert(client_name, pm_name, pm_email, customer_email)
 
 
 def _build_contact_date_map(sheet_jobs: list) -> dict:
@@ -397,15 +394,14 @@ def run() -> None:
         if own_run:
             finish_agent_run(run_id, "error", f"Error: {e}")
         try:
-            josh_id = cfg("slack_josh_user_id")
-            if josh_id:
-                timestamp = datetime.now(timezone.utc).isoformat()
-                msg = (
-                    f"🔴 Agent crash — OCA failed at {timestamp}\n"
-                    f"Error: {e}\n"
-                    f"The next scheduled run will retry automatically."
-                )
-                send_dm(josh_id, msg)
+            timestamp = datetime.now(timezone.utc).isoformat()
+            msg = (
+                f"🔴 Agent crash — OCA failed at {timestamp}\n"
+                f"Error: {e}\n"
+                f"The next scheduled run will retry automatically."
+            )
+            urgentmatters = cfg("slack_urgentmatters_channel") or "urgentmatters"
+            send_message(urgentmatters, msg)
         except Exception as notify_err:
             print(f"OCA: failed to send crash notification: {notify_err}", file=sys.stderr)
         raise
@@ -428,9 +424,6 @@ def _run(run_id: "int | None" = None) -> str:
     from db.state_store import get_pm_list
     pm_config = get_pm_list()
 
-    josh_slack_id = cfg("slack_josh_user_id")
-    sam_slack_id  = cfg("slack_sam_user_id")
-
     # ── Step 1: Fetch latest data ────────────────────────────────────────────
     sheet_jobs = get_active_jobs()
     if not sheet_jobs:
@@ -442,7 +435,7 @@ def _run(run_id: "int | None" = None) -> str:
     _checkpoint(run_id, f"OCA loaded {len(sheet_jobs)} sheet jobs, {len(hs_deals)} HubSpot deals")
 
     # ── Step 2: Sync — keep Sheet, HubSpot, and local DB aligned ────────────
-    hs_sync_summary = _sync_all(sheet_jobs, hs_deals, josh_slack_id)
+    hs_sync_summary = _sync_all(sheet_jobs, hs_deals)
     _checkpoint(
         run_id,
         f"HubSpot sync: matched by contact {hs_sync_summary.get('matched_contact', 0)}, "
@@ -451,7 +444,7 @@ def _run(run_id: "int | None" = None) -> str:
     )
 
     # ── Step 2b: Gmail-based PM↔customer contact history ────────────────────
-    _fetch_email_histories(sheet_jobs, pm_config, josh_slack_id)
+    _fetch_email_histories(sheet_jobs, pm_config)
     contact_date_map = _build_contact_date_map(sheet_jobs)
 
     # Re-fetch open deals — check_job_readiness() needs the up-to-date list.
@@ -464,18 +457,20 @@ def _run(run_id: "int | None" = None) -> str:
     db_jobs = {j["client_name"]: j for j in get_all_active_jobs()}
 
     # ── Step 3: Run checks ───────────────────────────────────────────────────
-    stale_flags       = check_stale_records(sheet_jobs, contact_date_map)
-    missing_pm_flags  = check_missing_pm(sheet_jobs, contact_date_map)
-    crew_flags        = check_unconfirmed_crew(sheet_jobs, contact_date_map)
-    invoice_flags     = check_dropped_invoices(sheet_jobs, contact_date_map)
-    readiness_flags   = check_job_readiness(sheet_jobs, hs_deals, db_jobs, contact_date_map)
+    stale_flags          = check_stale_records(sheet_jobs, contact_date_map)
+    missing_pm_flags     = check_missing_pm(sheet_jobs, contact_date_map)
+    crew_flags           = check_unconfirmed_crew(sheet_jobs, contact_date_map)
+    invoice_flags        = check_dropped_invoices(sheet_jobs, contact_date_map)
+    readiness_flags      = check_job_readiness(sheet_jobs, hs_deals, db_jobs, contact_date_map)
     deal_not_found_flags = hs_sync_summary.get("deal_not_found_flags", [])
+    approaching_jobs     = check_approaching_deadline(sheet_jobs, contact_date_map)
 
     _checkpoint(
         run_id,
         f"Checks: stale_record={len(stale_flags)}, missing_pm={len(missing_pm_flags)}, "
         f"unconfirmed_crew={len(crew_flags)}, dropped_invoice={len(invoice_flags)}, "
-        f"readiness_sync={len(readiness_flags)}, deal_not_found={len(deal_not_found_flags)}",
+        f"readiness_sync={len(readiness_flags)}, deal_not_found={len(deal_not_found_flags)}, "
+        f"approaching_deadline={len(approaching_jobs)}",
     )
 
     all_flags: list[dict] = []
@@ -513,7 +508,7 @@ def _run(run_id: "int | None" = None) -> str:
                     if urgency == "warning":
                         age_hours = get_flag_alert_age_hours(job_id, flag_type)
                         if age_hours is not None and age_hours > 48:
-                            escalate_unresolved_warning(flag, int(age_hours), josh_slack_id)
+                            escalate_unresolved_warning(flag, int(age_hours))
                     update_flag_alerted(job_id, flag_type)
                     active_flags.append(flag)
                     alerted += 1
@@ -528,36 +523,47 @@ def _run(run_id: "int | None" = None) -> str:
         if not active_flags:
             continue
 
-        # deal_not_found flags get a dedicated condensed DM to Josh — never
-        # posted to #oca-alerts and never combined with other flag types.
+        # deal_not_found flags get a dedicated condensed message to #urgentmatters —
+        # never combined with other flag types.
         deal_not_found = [f for f in active_flags if f["flag_type"] == "deal_not_found"]
         other_flags = [f for f in active_flags if f["flag_type"] != "deal_not_found"]
 
         for flag in deal_not_found:
-            send_deal_not_found_alert(flag, josh_slack_id)
+            send_deal_not_found_alert(flag)
 
         if not other_flags:
             continue
 
         if len(other_flags) == 1:
-            route_alert(other_flags[0], pm_config, josh_slack_id, sam_slack_id)
+            route_alert(other_flags[0])
         else:
-            route_combined_alert(other_flags, pm_config, josh_slack_id, sam_slack_id)
+            route_combined_alert(other_flags)
+
+    # ── Step 4b: Approaching deadline pre-notifications (23-hour cooldown) ───
+    to_notify_approaching: list[dict] = []
+    for job in approaching_jobs:
+        job_id = job["job_id"]
+        flag_type = "approaching_deadline"
+        if flag_exists(job_id, flag_type):
+            if should_alert_again(job_id, flag_type, cooldown_hours=23):
+                update_flag_alerted(job_id, flag_type)
+                to_notify_approaching.append(job)
+            else:
+                logger.info(f"OCA suppressed approaching_deadline for {job_id} (cooldown)")
+        else:
+            create_flag(job_id, flag_type, f"PM last contacted customer {job.get('days_since_contact', 6)} days ago", "warning")
+            to_notify_approaching.append(job)
+
+    if to_notify_approaching:
+        send_approaching_deadline_notifications(to_notify_approaching)
+        _checkpoint(run_id, f"Approaching deadline notified: {len(to_notify_approaching)} jobs")
 
     # ── Step 5: Auto-resolve flags ───────────────────────────────────────────
     for flag_type in _ALL_FLAG_TYPES:
         flagged_ids = [f["job_id"] for f in all_flags if f["flag_type"] == flag_type]
+        if flag_type == "approaching_deadline":
+            flagged_ids = [j["job_id"] for j in approaching_jobs]
         resolve_flags_not_in(flagged_ids, flag_type)
-
-    # ── Step 6: Daily digest + weekly summary ────────────────────────────────
-    summary   = get_active_flags_summary()
-    first_run = is_first_run_today()
-    if first_run:
-        send_daily_digest(summary, sam_slack_id)
-
-    if datetime.now().weekday() == 0 and first_run:
-        weekly = get_weekly_summary()
-        send_weekly_summary(weekly, josh_slack_id)
 
     logger.info(f"OCA run complete — alerted: {alerted}, suppressed: {suppressed}")
 

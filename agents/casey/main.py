@@ -9,17 +9,15 @@ from integrations.hubspot import (
     create_note_on_deal,
 )
 from integrations.gmail import send_email
-from integrations.slack import send_message, send_dm
+from integrations.slack import send_message
 from integrations.quickbooks import get_invoice_status_for_customer
 from agents.casey.email_composer import compose_customer_update_email
 from db.state_store import (
     upsert_active_job,
-    get_jobs_due_for_update,
     get_all_active_jobs,
     set_update_sent,
     set_next_scheduled_update,
     set_escalation,
-    get_summary,
     was_alert_sent_today,
     get_alert_sent_at_today,
     was_escalation_sent_recently,
@@ -165,7 +163,7 @@ def _idempotent_skip(job: dict) -> bool:
 def _get_contact_date(client_name: str, pm_name: str, job: dict) -> "date | None":
     """Last PM↔customer contact date: Gmail history (cached by OCA) first, sheet fallback otherwise.
 
-    `job` here is a casey_active_jobs row dict (from get_jobs_due_for_update),
+    `job` here is a casey_active_jobs row dict (from get_all_active_jobs),
     where the sheet's "Most Recent communication" value is stored under
     most_recent_contact — fall back to sheet_last_contact too in case a raw
     sheet job dict is ever passed in.
@@ -256,6 +254,36 @@ def _write_escalation_to_hubspot(job: dict, reason: str) -> None:
     })
 
 
+def _notify_casey_stepped_in(job: dict, pm_name: str, days_since_contact: int) -> None:
+    """Post to #urgentmatters and email Chris when Casey sends on behalf of a PM who missed the 7-day rule."""
+    client_name = job["client_name"]
+    urgentmatters = cfg("slack_urgentmatters_channel") or "urgentmatters"
+    chris_email   = cfg("chris_notification_email") or ""
+    sender_email  = cfg("notification_sender_email") or ""
+
+    msg = (
+        f"📬 *Casey Stepped In — {pm_name} missed 7-day requirement for {client_name}*\n"
+        f"PM last contacted this customer {days_since_contact} days ago.\n"
+        f"Casey has sent a customer update email on the PM's behalf."
+    )
+    send_message(urgentmatters, msg)
+
+    if not chris_email:
+        return
+    if not sender_email:
+        logger.warning(f"_notify_casey_stepped_in: notification_sender_email not configured — skipping Chris email for {client_name}")
+        return
+
+    subject = f"Casey Stepped In — {pm_name} missed 7-day requirement for {client_name}"
+    body_html = f"<p>{msg.replace(chr(10), '<br>').replace('*', '')}</p>"
+    try:
+        ok, _, _ = send_email(sender_email=sender_email, to_email=chris_email, subject=subject, body_html=body_html)
+        if not ok:
+            logger.warning(f"_notify_casey_stepped_in: failed to email Chris for {client_name}")
+    except Exception as e:
+        logger.warning(f"_notify_casey_stepped_in: exception emailing Chris for {client_name}: {e}")
+
+
 def _checkpoint(run_id: "int | None", line: str) -> None:
     """Append a key log line to this run's agent_runs record, if one exists.
 
@@ -286,15 +314,14 @@ def run() -> None:
         if own_run:
             finish_agent_run(run_id, "error", f"Error: {e}")
         try:
-            josh_id = cfg("slack_josh_user_id")
-            if josh_id:
-                timestamp = datetime.now(timezone.utc).isoformat()
-                msg = (
-                    f"🔴 Agent crash — Casey failed at {timestamp}\n"
-                    f"Error: {e}\n"
-                    f"The next scheduled run will retry automatically."
-                )
-                send_dm(josh_id, msg)
+            timestamp = datetime.now(timezone.utc).isoformat()
+            msg = (
+                f"🔴 Agent crash — Casey failed at {timestamp}\n"
+                f"Error: {e}\n"
+                f"The next scheduled run will retry automatically."
+            )
+            urgentmatters = cfg("slack_urgentmatters_channel") or "urgentmatters"
+            send_message(urgentmatters, msg)
         except Exception as notify_err:
             print(f"Casey: failed to send crash notification: {notify_err}", file=sys.stderr)
         raise
@@ -308,8 +335,7 @@ def _run(run_id: "int | None" = None) -> str:
         logger.error("Casey: google_sheets_id not configured in DB — aborting")
         return "Aborted: google_sheets_id not configured"
 
-    JOSH_SLACK_USER_ID  = cfg("slack_josh_user_id")
-    SLACK_DAILY_CHANNEL = cfg("slack_casey_channel") or "casey-daily"
+    URGENTMATTERS_CHANNEL = cfg("slack_urgentmatters_channel") or "urgentmatters"
 
     # Fix 2: global email pause switch — default to paused if not yet configured
     emails_paused = (get_config("casey_emails_paused") or "true").strip().lower() == "true"
@@ -321,7 +347,6 @@ def _run(run_id: "int | None" = None) -> str:
     now_et = datetime.now(ZoneInfo("America/New_York"))
     if now_et.weekday() in (5, 6):
         logger.info("Casey weekend skip — no customer emails sent on weekends")
-        send_message(SLACK_DAILY_CHANNEL, "ℹ️ Casey run skipped — no customer emails are sent on weekends.")
         return "Weekend skip — no emails sent"
 
     logger.info("Casey starting run")
@@ -396,16 +421,15 @@ def _run(run_id: "int | None" = None) -> str:
     logger.info(f"Synced {synced} jobs to database")
     _checkpoint(run_id, f"HubSpot sync: {synced} jobs synced to database")
 
-    # ── Step 2: Process jobs due for email ───────────────────────────────────
-    due_jobs = get_jobs_due_for_update()
-    logger.info(f"Jobs due for update: {len(due_jobs)}")
+    # ── Step 2: Process all active jobs (PM contact gap determines sending) ──
+    all_db_jobs = get_all_active_jobs()
+    logger.info(f"Active jobs to process: {len(all_db_jobs)}")
 
     emails_sent = 0
     escalations = 0
     skipped = 0
-    no_invoice_found: list[str] = []
 
-    for job in due_jobs:
+    for job in all_db_jobs:
         client_name = job["client_name"]
         pm_name     = job.get("pm_name", "")
         job_id      = f"{client_name}|{pm_name}"
@@ -435,12 +459,22 @@ def _run(run_id: "int | None" = None) -> str:
         contact_date = _get_contact_date(client_name, pm_name, job)
         days_since_contact = calculate_days_since(contact_date)
 
+        # PM contact gap trigger: skip jobs where PM contacted within last 7 days
+        if days_since_contact is not None and days_since_contact <= 7:
+            logger.info(f"SKIP {job_id} — PM contacted {days_since_contact}d ago (within 7-day window)")
+            _checkpoint(run_id, f"SKIP {job_id} — PM contacted {days_since_contact}d ago")
+            skipped += 1
+            continue
+
         # ── QB invoice status + scenario (computed before escalation checks) ──
         qb_status = get_invoice_status_for_customer(job["client_name"])
         job["qb_invoice_status"] = qb_status
-        if not qb_status or not qb_status.get("found"):
-            no_invoice_found.append(client_name)
         scenario = _determine_scenario(job)
+
+        # Change 1: remap in_progress → not_started — Casey lacks reliable activity data
+        if scenario == "in_progress":
+            logger.info(f"Scenario in_progress remapped to not_started for {client_name} — Casey does not have reliable activity data")
+            scenario = "not_started"
 
         # ── Escalation checks (run first, even for never-processed jobs — a
         # newly onboarded job that's already stale must still escalate) ───────
@@ -458,8 +492,7 @@ def _run(run_id: "int | None" = None) -> str:
             else:
                 set_escalation(client_name, pm_name, escalation_reason)
                 msg = build_escalation_slack_msg(job, escalation_reason, contact_date)
-                if JOSH_SLACK_USER_ID:
-                    send_dm(JOSH_SLACK_USER_ID, msg)
+                send_message(URGENTMATTERS_CHANNEL, msg)
                 record_alert_sent(job_id, "escalation", client_name)
                 _write_escalation_to_hubspot(job, escalation_reason)
                 logger.info(f"ESCALATION {job_id} reason={escalation_reason}")
@@ -553,6 +586,9 @@ def _run(run_id: "int | None" = None) -> str:
             message_id=prior_message_id,
         )
 
+        # Track whether this is a backstop send (PM gap > 7 days, not a designed intro)
+        is_backstop = days_since_contact is not None and days_since_contact > 7
+
         if sent:
             next_update = date.today() + timedelta(days=7)
             set_update_sent(client_name, pm_name)
@@ -562,32 +598,14 @@ def _run(run_id: "int | None" = None) -> str:
             logger.info(f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
             _checkpoint(run_id, f"EMAIL SENT [{scenario}] {job_id} → {customer_email} (cc={cc_email})")
             emails_sent += 1
+
+            # Change 5: notify Chris and #urgentmatters when Casey steps in for a PM
+            if is_backstop and scenario != "new_job_intro":
+                _notify_casey_stepped_in(job, pm_name, days_since_contact)
         else:
             logger.error(f"EMAIL FAILED {job_id} → {customer_email}")
             _checkpoint(run_id, f"ERROR: EMAIL FAILED {job_id} → {customer_email}")
 
-    # ── Step 3: Daily summary ────────────────────────────────────────────────
-    summary = get_summary()
-    all_jobs = get_all_active_jobs()
-    not_started_count = sum(1 for j in all_jobs if _determine_scenario(j) == "not_started")
-    in_progress_count = sum(1 for j in all_jobs if _determine_scenario(j) == "in_progress")
-    invoice_count     = sum(1 for j in all_jobs if _determine_scenario(j) == "invoice_reminder")
-
-    summary_msg = (
-        f"*Casey Daily Summary*\n"
-        f"Active jobs tracked: {summary['total']}\n"
-        f"  Not started: {not_started_count}  |  In progress: {in_progress_count}  |  Invoice pending: {invoice_count}\n"
-        f"Emails sent today: {emails_sent}\n"
-        f"Escalations triggered: {escalations}\n"
-        f"Skipped: {skipped}\n"
-        f"Up to date: {summary['up_to_date']}"
-    )
-    if no_invoice_found:
-        summary_msg += (
-            f"\n\n📋 No QB invoice found for: {', '.join(no_invoice_found)}\n"
-            f"(These customers may not have an invoice in QuickBooks yet — no action needed)"
-        )
-    send_message(SLACK_DAILY_CHANNEL, summary_msg)
     logger.info("Casey run complete")
 
     run_summary = f"{emails_sent} emails sent, {escalations} escalations, {skipped} skipped"
