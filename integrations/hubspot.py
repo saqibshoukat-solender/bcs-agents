@@ -2,7 +2,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import atexit
 import re
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -48,6 +50,10 @@ _hs_circuit_open: bool = False
 # Auth failure flag: set True on 401, blocks all HubSpot calls for this run
 _hs_auth_failed: bool = False
 
+# Batching buffers — flushed at end of process via atexit (Fix 3, Fix 4)
+_pending_deal_updates: list[dict] = []
+_pending_notes: list[dict] = []
+
 
 def hs_available() -> bool:
     return not _hs_circuit_open and not _hs_auth_failed
@@ -74,13 +80,41 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {cfg('hubspot_access_token', 'HUBSPOT_ACCESS_TOKEN')}"}
 
 
+def _hs_request(method: str, url: str, **kwargs) -> requests.Response:
+    """Wrap a single HubSpot HTTP call with 429 retry logic (up to 3 retries).
+
+    Raises requests.RequestException on network errors (same as requests.get/post/etc).
+    On 429, reads Retry-After header, sleeps that duration + 0.5 s, and retries.
+    After 3 retries returns the final 429 response so the caller can handle it.
+    """
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        resp = getattr(requests, method)(url, **kwargs)
+        if resp.status_code != 429:
+            return resp
+        retry_after = float(resp.headers.get("Retry-After", 5))
+        sleep_time = retry_after + 0.5
+        if attempt < max_retries:
+            logger.warning(
+                f"HubSpot 429 on {method.upper()} {url} — "
+                f"sleeping {sleep_time:.1f}s (attempt {attempt + 1}/{max_retries})"
+            )
+            time.sleep(sleep_time)
+        else:
+            logger.error(
+                f"HubSpot 429 after {max_retries} retries on {method.upper()} {url} — giving up"
+            )
+            return resp
+    return resp  # unreachable; satisfies type checkers
+
+
 def _load_owners() -> None:
     global _owner_cache
     if _owner_cache:
         return
     url = "https://api.hubapi.com/crm/v3/owners?limit=100"
     try:
-        response = requests.get(url, headers=_headers(), timeout=10)
+        response = _hs_request("get", url, headers=_headers(), timeout=10)
         if response.status_code == 401:
             _trip_auth_failure()
             return
@@ -112,7 +146,7 @@ def _search_deals(filter_groups: list[dict], label: str = "") -> list[dict[str, 
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            response = _hs_request("post", url, headers=headers, json=payload, timeout=15)
             if response.status_code == 401:
                 _trip_auth_failure()
                 break
@@ -130,6 +164,8 @@ def _search_deals(filter_groups: list[dict], label: str = "") -> list[dict[str, 
                 "id": deal.get("id"),
                 "properties": deal.get("properties", {}),
             })
+
+        time.sleep(0.25)  # Fix 1: throttle to < 4 req/sec
 
         next_after = data.get("paging", {}).get("next", {}).get("after")
         if next_after:
@@ -153,8 +189,8 @@ def search_deal_by_exact_name(deal_name: str) -> "str | None":
         "limit": 1,
     }
     try:
-        resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
-                             json=payload, timeout=10)
+        resp = _hs_request("post", url, headers={**_headers(), "Content-Type": "application/json"},
+                           json=payload, timeout=10)
         if resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -184,7 +220,7 @@ def get_all_deals_paginated(properties: "list[str] | None" = None) -> list[dict[
         if after:
             params["after"] = after
         try:
-            resp = requests.get(url, headers=_headers(), params=params, timeout=15)
+            resp = _hs_request("get", url, headers=_headers(), params=params, timeout=15)
             if resp.status_code == 401:
                 _trip_auth_failure()
                 break
@@ -205,7 +241,8 @@ def get_all_deals_paginated(properties: "list[str] | None" = None) -> list[dict[
 def archive_deal(deal_id: str) -> bool:
     """Archive (soft-delete) a HubSpot deal by ID."""
     try:
-        resp = requests.delete(
+        resp = _hs_request(
+            "delete",
             f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}",
             headers=_headers(), timeout=10,
         )
@@ -268,7 +305,7 @@ def get_deals_from_sales_pipeline() -> list[dict[str, Any]]:
 def get_deal_contact(deal_id: str) -> dict[str, Any] | None:
     assoc_url = f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}/associations/contacts"
     try:
-        assoc_resp = requests.get(assoc_url, headers=_headers(), timeout=10)
+        assoc_resp = _hs_request("get", assoc_url, headers=_headers(), timeout=10)
         if assoc_resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -283,7 +320,7 @@ def get_deal_contact(deal_id: str) -> dict[str, Any] | None:
             f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}"
             "?properties=firstname,lastname,email,phone"
         )
-        contact_resp = requests.get(contact_url, headers=_headers(), timeout=10)
+        contact_resp = _hs_request("get", contact_url, headers=_headers(), timeout=10)
         if contact_resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -320,7 +357,7 @@ def get_deal_stages() -> dict[str, str]:
     for pipeline_id in [CURRENT_PROJECTS_PIPELINE_ID, SALES_PIPELINE_ID]:
         url = f"https://api.hubapi.com/crm/v3/pipelines/deals/{pipeline_id}"
         try:
-            response = requests.get(url, headers=_headers(), timeout=10)
+            response = _hs_request("get", url, headers=_headers(), timeout=10)
             if response.status_code == 401:
                 _trip_auth_failure()
                 break
@@ -370,7 +407,7 @@ def search_deals_by_client_name(client_name: str) -> list[dict[str, Any]]:
         "limit": 10,
     }
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = _hs_request("post", url, headers=headers, json=payload, timeout=15)
         if response.status_code == 401:
             _trip_auth_failure()
             return []
@@ -378,6 +415,7 @@ def search_deals_by_client_name(client_name: str) -> list[dict[str, Any]]:
         results = response.json().get("results", [])
         deals = [{"id": d["id"], "properties": d.get("properties", {})} for d in results]
         logger.info(f"HubSpot search '{client_name}': {len(deals)} deals found")
+        time.sleep(0.25)  # Fix 1: throttle to < 4 req/sec
         return deals
     except requests.RequestException as e:
         logger.error(f"HubSpot error searching deals for '{client_name}': {e}")
@@ -415,7 +453,8 @@ def create_deal(
     if owner_id:
         props["hubspot_owner_id"] = owner_id
     try:
-        resp = requests.post(
+        resp = _hs_request(
+            "post",
             "https://api.hubapi.com/crm/v3/objects/deals",
             headers={**_headers(), "Content-Type": "application/json"},
             json={"properties": props},
@@ -447,8 +486,8 @@ def search_contact_by_email(email: str) -> "str | None":
         "limit": 1,
     }
     try:
-        resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
-                             json=payload, timeout=10)
+        resp = _hs_request("post", url, headers={**_headers(), "Content-Type": "application/json"},
+                           json=payload, timeout=10)
         if resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -457,6 +496,7 @@ def search_contact_by_email(email: str) -> "str | None":
             return None
         resp.raise_for_status()
         results = resp.json().get("results", [])
+        time.sleep(0.25)  # Fix 1: throttle to < 4 req/sec
         return results[0]["id"] if results else None
     except requests.RequestException as e:
         logger.error(f"HubSpot search_contact_by_email({email}): {e}")
@@ -475,8 +515,8 @@ def search_contact_by_name(first_name: str, last_name: str = "") -> "str | None"
         "limit": 1,
     }
     try:
-        resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
-                             json=payload, timeout=10)
+        resp = _hs_request("post", url, headers={**_headers(), "Content-Type": "application/json"},
+                           json=payload, timeout=10)
         if resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -485,6 +525,7 @@ def search_contact_by_name(first_name: str, last_name: str = "") -> "str | None"
             return None
         resp.raise_for_status()
         results = resp.json().get("results", [])
+        time.sleep(0.25)  # Fix 1: throttle to < 4 req/sec
         return results[0]["id"] if results else None
     except requests.RequestException as e:
         logger.error(f"HubSpot search_contact_by_name({first_name} {last_name}): {e}")
@@ -507,8 +548,8 @@ def search_contact_by_phone(phone_digits: str) -> "str | None":
             "limit": 1,
         }
         try:
-            resp = requests.post(url, headers={**_headers(), "Content-Type": "application/json"},
-                                  json=payload, timeout=10)
+            resp = _hs_request("post", url, headers={**_headers(), "Content-Type": "application/json"},
+                               json=payload, timeout=10)
             if resp.status_code == 401:
                 _trip_auth_failure()
                 return None
@@ -517,6 +558,7 @@ def search_contact_by_phone(phone_digits: str) -> "str | None":
                 return None
             resp.raise_for_status()
             results = resp.json().get("results", [])
+            time.sleep(0.25)  # Fix 1: throttle to < 4 req/sec
             if results:
                 return results[0]["id"]
         except requests.RequestException as e:
@@ -529,7 +571,8 @@ def get_deals_for_contact(contact_id: str) -> list[dict[str, Any]]:
     if not contact_id:
         return []
     try:
-        resp = requests.get(
+        resp = _hs_request(
+            "get",
             f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}/associations/deals",
             headers=_headers(),
             timeout=10,
@@ -552,7 +595,8 @@ def get_deals_for_contact(contact_id: str) -> list[dict[str, Any]]:
         if not deal_id:
             continue
         try:
-            deal_resp = requests.get(
+            deal_resp = _hs_request(
+                "get",
                 f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}",
                 headers=_headers(),
                 params={"properties": "dealname,dealstage"},
@@ -670,7 +714,8 @@ def create_contact(firstname: str, lastname: str = "", email: str = "", phone: s
     if phone:
         props["phone"] = phone
     try:
-        resp = requests.post(
+        resp = _hs_request(
+            "post",
             "https://api.hubapi.com/crm/v3/objects/contacts",
             headers={**_headers(), "Content-Type": "application/json"},
             json={"properties": props},
@@ -706,7 +751,7 @@ def associate_contact_to_deal(contact_id: str, deal_id: str) -> bool:
         f"/associations/contacts/{contact_id}/deal_to_contact"
     )
     try:
-        resp = requests.put(url, headers=_headers(), timeout=10)
+        resp = _hs_request("put", url, headers=_headers(), timeout=10)
         if resp.status_code == 401:
             _trip_auth_failure()
             return False
@@ -724,47 +769,81 @@ def associate_contact_to_deal(contact_id: str, deal_id: str) -> bool:
 
 
 def update_deal_properties(deal_id: str, properties: dict) -> bool:
-    """Patch arbitrary properties onto a HubSpot deal."""
+    """Queue deal property updates for end-of-run batch flush.
+
+    Updates are merged per deal_id (later calls win) and flushed in batches of
+    100 via /crm/v3/objects/deals/batch/update at process exit (or when
+    flush_deal_property_updates() is called explicitly). Returns True optimistically.
+    """
     if not hs_available() or not deal_id or not properties:
         return False
-    try:
-        resp = requests.patch(
-            f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}",
-            headers={**_headers(), "Content-Type": "application/json"},
-            json={"properties": properties},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            _trip_auth_failure()
-            return False
-        if resp.status_code == 400:
-            # Property names don't exist in HubSpot yet — warn, don't error
-            try:
-                detail = resp.json().get("message", resp.text[:200])
-            except Exception:
-                detail = resp.text[:200]
-            logger.warning(
-                f"HubSpot update_deal_properties({deal_id}): 400 — one or more properties not found. "
-                f"Create them in HubSpot → Settings → Properties → Deals. Detail: {detail}"
-            )
-            return False
-        if resp.status_code >= 500:
-            _trip_circuit(f"update_deal_properties deal={deal_id}")
-            return False
-        resp.raise_for_status()
-        logger.info(f"Updated deal {deal_id} properties: {list(properties.keys())}")
-        return True
-    except requests.RequestException as e:
-        logger.error(f"HubSpot update_deal_properties({deal_id}): {e}")
-        return False
+    _pending_deal_updates.append({"id": deal_id, "properties": dict(properties)})
+    logger.debug(f"Queued deal {deal_id} property update: {list(properties.keys())}")
+    return True
 
 
-def create_note_on_deal(deal_id: str, note_body: str) -> "str | None":
-    """Create a CRM note associated with a deal. Returns note ID or None."""
+def flush_deal_property_updates() -> None:
+    """Batch-flush all queued deal property updates to HubSpot.
+
+    Uses /crm/v3/objects/deals/batch/update in batches of 100. Multiple queued
+    updates for the same deal_id are merged before sending (later values win).
+    Safe to call multiple times — the buffer is cleared on first call.
+    """
+    global _pending_deal_updates
+    if not _pending_deal_updates:
+        return
+
+    # Merge updates for the same deal_id — later values win
+    merged: dict[str, dict] = {}
+    for item in _pending_deal_updates:
+        did = item["id"]
+        if did not in merged:
+            merged[did] = {}
+        merged[did].update(item["properties"])
+    _pending_deal_updates = []  # clear immediately so atexit double-flush is a no-op
+
+    inputs = [{"id": did, "properties": props} for did, props in merged.items()]
+    url = "https://api.hubapi.com/crm/v3/objects/deals/batch/update"
+    headers = {**_headers(), "Content-Type": "application/json"}
+
+    for i in range(0, len(inputs), 100):
+        batch = inputs[i:i + 100]
+        try:
+            resp = _hs_request("post", url, headers=headers, json={"inputs": batch}, timeout=30)
+            if resp.status_code == 401:
+                _trip_auth_failure()
+                return
+            if resp.status_code >= 500:
+                _trip_circuit("flush_deal_property_updates")
+                return
+            if resp.status_code not in (200, 207):
+                logger.error(
+                    f"flush_deal_property_updates: unexpected {resp.status_code}: {resp.text[:200]}"
+                )
+            else:
+                logger.info(f"Flushed {len(batch)} deal property updates (batch {i // 100 + 1})")
+        except requests.RequestException as e:
+            logger.error(f"flush_deal_property_updates: {e}")
+
+
+def create_note_on_deal(deal_id: str, note_body: str, *, immediate: bool = False) -> "str | None":
+    """Create a CRM note associated with a deal.
+
+    By default, buffers the note for end-of-run batch flush via flush_notes().
+    Pass immediate=True to post synchronously (e.g. for escalation flows where
+    note timing matters). Returns note ID only on the immediate path; returns
+    None when buffered (ID is unavailable until flush).
+    """
     if not hs_available() or not deal_id or not note_body:
         return None
-    import time as _time
-    ts_ms = str(int(_time.time() * 1000))
+
+    if not immediate:
+        _pending_notes.append({"deal_id": deal_id, "note_body": note_body})
+        logger.debug(f"Queued note for deal {deal_id}")
+        return None
+
+    # Immediate path — used for escalation flows
+    ts_ms = str(int(time.time() * 1000))
     payload = {
         "properties": {
             "hs_note_body": note_body,
@@ -776,7 +855,8 @@ def create_note_on_deal(deal_id: str, note_body: str) -> "str | None":
         }],
     }
     try:
-        resp = requests.post(
+        resp = _hs_request(
+            "post",
             "https://api.hubapi.com/crm/v3/objects/notes",
             headers={**_headers(), "Content-Type": "application/json"},
             json=payload,
@@ -795,6 +875,53 @@ def create_note_on_deal(deal_id: str, note_body: str) -> "str | None":
     except requests.RequestException as e:
         logger.error(f"HubSpot create_note_on_deal({deal_id}): {e}")
         return None
+
+
+def flush_notes() -> None:
+    """Batch-flush all queued notes to HubSpot.
+
+    Uses /crm/v3/objects/notes/batch/create in batches of 100.
+    Safe to call multiple times — the buffer is cleared on first call.
+    """
+    global _pending_notes
+    if not _pending_notes:
+        return
+    pending = _pending_notes
+    _pending_notes = []  # clear immediately so atexit double-flush is a no-op
+
+    ts_ms = str(int(time.time() * 1000))
+    url = "https://api.hubapi.com/crm/v3/objects/notes/batch/create"
+    headers = {**_headers(), "Content-Type": "application/json"}
+
+    for i in range(0, len(pending), 100):
+        batch = pending[i:i + 100]
+        inputs = [
+            {
+                "properties": {
+                    "hs_note_body": note["note_body"],
+                    "hs_timestamp": ts_ms,
+                },
+                "associations": [{
+                    "to": {"id": note["deal_id"]},
+                    "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 214}],
+                }],
+            }
+            for note in batch
+        ]
+        try:
+            resp = _hs_request("post", url, headers=headers, json={"inputs": inputs}, timeout=30)
+            if resp.status_code == 401:
+                _trip_auth_failure()
+                return
+            if resp.status_code >= 500:
+                _trip_circuit("flush_notes")
+                return
+            if resp.status_code not in (200, 207):
+                logger.error(f"flush_notes: unexpected {resp.status_code}: {resp.text[:200]}")
+            else:
+                logger.info(f"Flushed {len(batch)} notes (batch {i // 100 + 1})")
+        except requests.RequestException as e:
+            logger.error(f"flush_notes: {e}")
 
 
 def find_or_create_contact(client_name: str, email: str = "", phone: str = "") -> "str | None":
@@ -822,7 +949,7 @@ def find_or_create_contact(client_name: str, email: str = "", phone: str = "") -
 def get_contact_email_for_deal(deal_id: str) -> str | None:
     assoc_url = f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}/associations/contacts"
     try:
-        assoc_resp = requests.get(assoc_url, headers=_headers(), timeout=10)
+        assoc_resp = _hs_request("get", assoc_url, headers=_headers(), timeout=10)
         if assoc_resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -835,7 +962,7 @@ def get_contact_email_for_deal(deal_id: str) -> str | None:
             f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}"
             "?properties=email"
         )
-        contact_resp = requests.get(contact_url, headers=_headers(), timeout=10)
+        contact_resp = _hs_request("get", contact_url, headers=_headers(), timeout=10)
         if contact_resp.status_code == 401:
             _trip_auth_failure()
             return None
@@ -844,3 +971,8 @@ def get_contact_email_for_deal(deal_id: str) -> str | None:
     except requests.RequestException as e:
         logger.error(f"HubSpot error fetching email for deal {deal_id}: {e}")
         return None
+
+
+# Flush batched updates/notes at process exit so they fire even if callers don't flush manually.
+atexit.register(flush_deal_property_updates)
+atexit.register(flush_notes)
