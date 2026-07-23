@@ -397,6 +397,7 @@ def _run(run_id: "int | None" = None) -> str:
             "client_name":            client_name,
             "pm_name":                job.get("pm_name", ""),
             "job_type":               job.get("job_type", ""),
+            "primary_job_type":       job.get("primary_job_type", ""),
             "start_date":             job.get("start_date", ""),
             "deposit_date":           job.get("deposit_date", ""),
             "estimated_start_window": job.get("estimated_start_window", ""),
@@ -500,18 +501,10 @@ def _run(run_id: "int | None" = None) -> str:
                 escalations += 1
             continue
 
-        # ── New-job intro: first time Casey has ever processed this job ────────
-        if job.get("last_customer_update_sent") is None and job.get("next_scheduled_update") is None:
-            deposit_date = parse_latest_date(job.get("deposit_date", ""))
-            days_since_deposit = (date.today() - deposit_date).days if deposit_date else None
-            if days_since_deposit is not None and 0 <= days_since_deposit <= 14:
-                scenario = "new_job_intro"
-            else:
-                set_next_scheduled_update(client_name, pm_name, date.today() + timedelta(days=7))
-                logger.info(f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
-                _checkpoint(run_id, f"SKIP {job_id} — deposit not within last 14 days, normal update scheduled in 7 days")
-                skipped += 1
-                continue
+        # New-job intro: PM gap is already > 7 days at this point; if Casey has
+        # never emailed this customer, use the intro scenario.
+        if job.get("last_customer_update_sent") is None:
+            scenario = "new_job_intro"
 
         # ── Email send ────────────────────────────────────────────────────
         sent_at_today = get_alert_sent_at_today(job_id, "update_due")

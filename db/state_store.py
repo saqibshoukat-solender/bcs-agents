@@ -63,7 +63,7 @@ if _db_available:
 
     class CaseyActiveJob(Base):
         __tablename__ = "casey_active_jobs"
-        __table_args__ = (UniqueConstraint("client_name", "sheet_tab", name="uq_client_sheet_tab"),)
+        __table_args__ = (UniqueConstraint("client_name", "sheet_tab", "primary_job_type", name="uq_client_sheet_tab_jobtype"),)
 
         id = Column(Integer, primary_key=True)
         client_name = Column(String, nullable=False)
@@ -102,6 +102,8 @@ if _db_available:
         last_email_thread_id  = Column(Text, nullable=True)
         last_email_message_id = Column(Text, nullable=True)
         last_email_subject    = Column(Text, nullable=True)
+        # Upsert key v2: allows multi-job clients to have one row per job type
+        primary_job_type = Column(String, nullable=True)
 
     class CustomerEmailHistory(Base):
         __tablename__ = "customer_email_history"
@@ -164,7 +166,7 @@ if _db_available:
 
 # --- In-memory fallback stores ---
 _memory_store: dict[tuple[str, str], list[datetime]] = {}
-_memory_jobs: dict[tuple[str, str], dict] = {}  # keyed by (client_name, sheet_tab)
+_memory_jobs: dict[tuple[str, str, str], dict] = {}  # keyed by (client_name, sheet_tab, primary_job_type)
 
 
 def _row_to_dict(row: "CaseyActiveJob") -> dict:
@@ -204,6 +206,7 @@ def _row_to_dict(row: "CaseyActiveJob") -> dict:
         "last_email_thread_id": row.last_email_thread_id,
         "last_email_message_id": row.last_email_message_id,
         "last_email_subject": row.last_email_subject,
+        "primary_job_type": row.primary_job_type or "",
     }
 
 
@@ -241,6 +244,8 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_message_id TEXT"))
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_subject TEXT"))
             conn.execute(text("ALTER TABLE pm_config ADD COLUMN IF NOT EXISTS display_note TEXT"))
+            # Upsert key v2: per-job-type tracking for multi-job clients
+            conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS primary_job_type VARCHAR DEFAULT ''"))
             conn.commit()
 
             # Change 4: one-time orphan cleanup — per (client_name, sheet_tab) keep only the most
@@ -288,6 +293,51 @@ def init_db() -> None:
                 except Exception as _e:
                     conn.rollback()
                     logger.warning(f"upsert_key_migrated migration: {_e}")
+
+            # Change 4 v2: migrate UNIQUE constraint to include primary_job_type so
+            # multi-job clients (e.g. Peter Speros) can have one row per job type.
+            if not conn.execute(
+                text("SELECT value FROM app_config WHERE key = 'upsert_key_v2_migrated'")
+            ).fetchone():
+                try:
+                    conn.execute(text(
+                        "UPDATE casey_active_jobs SET primary_job_type = '' WHERE primary_job_type IS NULL"
+                    ))
+                    conn.execute(text("""
+                        DELETE FROM casey_active_jobs
+                        WHERE id NOT IN (
+                            SELECT DISTINCT ON (client_name, COALESCE(sheet_tab,''), COALESCE(primary_job_type,''))
+                                id
+                            FROM casey_active_jobs
+                            ORDER BY client_name, COALESCE(sheet_tab,''), COALESCE(primary_job_type,''),
+                                     synced_at DESC NULLS LAST, id DESC
+                        )
+                    """))
+                    conn.execute(text(
+                        "ALTER TABLE casey_active_jobs DROP CONSTRAINT IF EXISTS uq_client_sheet_tab"
+                    ))
+                    conn.execute(text("""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_constraint
+                                WHERE conname = 'uq_client_sheet_tab_jobtype'
+                                AND conrelid = 'casey_active_jobs'::regclass
+                            ) THEN
+                                ALTER TABLE casey_active_jobs ADD CONSTRAINT uq_client_sheet_tab_jobtype
+                                UNIQUE (client_name, sheet_tab, primary_job_type);
+                            END IF;
+                        END $$
+                    """))
+                    conn.execute(
+                        text("INSERT INTO app_config (key, value) VALUES ('upsert_key_v2_migrated', 'true')")
+                    )
+                    conn.commit()
+                    logger.info("Migrated UNIQUE constraint to (client_name, sheet_tab, primary_job_type)")
+                except Exception as _e:
+                    conn.rollback()
+                    logger.warning(f"upsert_key_v2_migrated migration: {_e}")
+
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
                 "hubspot_field_pm_name":           "pm_name",
@@ -753,10 +803,11 @@ def upsert_active_job(job: dict) -> None:
     client_name = job["client_name"]
     pm_name = job.get("pm_name") or ""
     sheet_tab = job.get("sheet_tab") or ""
+    primary_job_type = job.get("primary_job_type") or ""
     now = datetime.now(timezone.utc)
 
     if not _db_available:
-        key = (client_name, sheet_tab)
+        key = (client_name, sheet_tab, primary_job_type)
         existing = _memory_jobs.get(key)
         if existing:
             for field in ("job_type", "start_date", "deposit_date", "estimated_start_window",
@@ -776,14 +827,16 @@ def upsert_active_job(job: dict) -> None:
 
     try:
         with _Session() as session:
-            # Change 4: look up by (client_name, sheet_tab) so PM name changes update in place.
+            # Look up by (client_name, sheet_tab, primary_job_type) so multi-job clients
+            # can each have their own row, and PM name changes still update in place.
             row = (
                 session.query(CaseyActiveJob)
-                .filter_by(client_name=client_name, sheet_tab=sheet_tab)
+                .filter_by(client_name=client_name, sheet_tab=sheet_tab, primary_job_type=primary_job_type)
                 .first()
             )
             if row:
-                row.pm_name = pm_name  # may have changed; sheet_tab is now the stable key
+                row.pm_name = pm_name
+                row.primary_job_type = primary_job_type
                 row.job_type = job.get("job_type")
                 row.start_date = job.get("start_date")
                 row.deposit_date = job.get("deposit_date")
@@ -817,6 +870,7 @@ def upsert_active_job(job: dict) -> None:
                 session.add(CaseyActiveJob(
                     client_name=client_name,
                     pm_name=pm_name,
+                    primary_job_type=primary_job_type,
                     job_type=job.get("job_type"),
                     start_date=job.get("start_date"),
                     deposit_date=job.get("deposit_date"),

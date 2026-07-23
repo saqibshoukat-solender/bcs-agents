@@ -47,12 +47,12 @@ def _get_jobs_from_db(to_start: bool) -> list[dict]:
                 .all()
             )
 
-        # Safety-net dedup: keep only the most recent synced_at per (client_name, sheet_tab).
-        # After the upsert_key migration this should never yield duplicates, but just in case.
+        # Safety-net dedup: keep only the most recent synced_at per (client_name, sheet_tab, primary_job_type).
+        # After the upsert_key_v2 migration this should never yield duplicates, but just in case.
         seen: set = set()
         deduped = []
         for r in rows:
-            key = (r.client_name, r.sheet_tab or "")
+            key = (r.client_name, r.sheet_tab or "", r.primary_job_type or "")
             if key not in seen:
                 seen.add(key)
                 deduped.append(r)

@@ -192,6 +192,7 @@ def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
         "client_name":              client,
         "pm_name":                  pm_name,
         "job_type":                 job_type,
+        "primary_job_type":         primary_type,
         "start_date":               col("start date"),
         "estimated_start_window":   col("realistic start date"),
         "deposit_date":             col("deposit date"),

@@ -916,7 +916,7 @@ def flush_notes() -> None:
             if resp.status_code >= 500:
                 _trip_circuit("flush_notes")
                 return
-            if resp.status_code not in (200, 207):
+            if resp.status_code not in (200, 201, 207):
                 logger.error(f"flush_notes: unexpected {resp.status_code}: {resp.text[:200]}")
             else:
                 logger.info(f"Flushed {len(batch)} notes (batch {i // 100 + 1})")
