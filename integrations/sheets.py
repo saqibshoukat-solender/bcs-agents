@@ -161,49 +161,66 @@ def is_valid_pm(pm_name: str, pm_config: list) -> bool:
 
 
 def _row_to_job(row: dict, sheet_tab: str) -> "dict[str, Any] | None":
-    client = row.get("Client", "").strip()
+    # Normalize all keys to lowercase+stripped so lookups are case-insensitive.
+    # This survives any future casing changes the client makes to the header row.
+    r = {k.lower().strip(): v for k, v in row.items()}
+
+    def col(name: str) -> str:
+        return r.get(name.lower().strip(), "").strip()
+
+    client = col("client")
     if not client:
         return None
-    pm_raw = normalize_pm_name(row.get("Project Manager", ""))
+
+    pm_raw = normalize_pm_name(col("project manager"))
     if pm_raw.strip().lower() in _INVALID_PM_VALUES:
         logger.info(f"Row for client '{client}' has no valid PM name (raw='{pm_raw}')")
         pm_name = ""
     else:
         pm_name = pm_raw
+
+    # PRIMARY JOB TYPE is the canonical source; fall back to SECONDARY JOB TYPE
+    # if primary is blank; combine as "Primary - Secondary" when both are present.
+    primary_type = col("primary job type")
+    secondary_type = col("secondary job type")
+    if primary_type and secondary_type:
+        job_type = f"{primary_type} - {secondary_type}"
+    else:
+        job_type = primary_type or secondary_type
+
     return {
-        "client_name":           client,
-        "pm_name":               pm_name,
-        "job_type":              row.get("Type of Job", "").strip(),
-        "start_date":            row.get("Start Date", "").strip(),
-        "estimated_start_window": row.get("Realistic Start Date", "").strip(),
-        "deposit_date":          row.get("Deposit Date", "").strip(),
-        # Raw "Most Recent communication" sheet column — used only as a fallback
-        # when no Gmail-based contact history exists (see _build_contact_date_map).
-        "sheet_last_contact":    row.get("Most Recent communication", "").strip(),
-        # Retained for casey_active_jobs storage / dashboard display only — no
-        # longer used as the primary staleness signal in agent logic.
-        "last_pm_contact":       (
-            parse_latest_date(row.get("Most Recent communication", ""))
-            or parse_latest_date(row.get("PM Communication history", ""))
+        "client_name":              client,
+        "pm_name":                  pm_name,
+        "job_type":                 job_type,
+        "start_date":               col("start date"),
+        "estimated_start_window":   col("realistic start date"),
+        "deposit_date":             col("deposit date"),
+        # Raw sheet column — fallback when no Gmail-based contact history exists.
+        "sheet_last_contact":       col("most recent communication"),
+        # Retained for casey_active_jobs / dashboard display only.
+        "last_pm_contact":          (
+            parse_latest_date(col("most recent communication"))
+            or parse_latest_date(col("pm communication history"))
         ),
-        "pm_communication_history": row.get("PM Communication history", "").strip(),
-        "assigned_crew_sub":     row.get("Contractor", "").strip(),
-        "customer_phone":        row.get("Phone number", "").strip(),
-        "deadline_to_start":     row.get("Dead line to start", "").strip(),
-        "overdue":               row.get("Overdue ", "").strip(),
-        "projected_end_date":    row.get("Projected End Date", "").strip(),
-        "end_date":              row.get("End Date", "").strip(),
-        "complaint":             row.get("Complaint", "").strip(),
-        "complaint_note":        row.get("Complaint", "").strip(),
-        "permit":                row.get("Permit ", "").strip(),
-        "total_project":         row.get("Total Project", "").strip(),
-        "to_collect":            row.get("To collect", "").strip(),
-        "client_mood":           row.get("Client mood", "").strip(),
-        "pm_notes":              row.get("Alfred Communication/NOTES", "").strip(),
-        "email":                 row.get("Email", "").strip(),
-        "job_description":       row.get("INFO", "").strip(),
-        "estimator_name":        row.get("Estimator", "").strip(),
-        "sheet_tab":             sheet_tab,
+        "pm_communication_history": col("pm communication history"),
+        "assigned_crew_sub":        col("subcontractor name"),
+        "customer_phone":           col("phone number"),
+        "deadline_to_start":        col("dead line to start"),
+        "projected_end_date":       col("projected end date"),
+        "end_date":                 col("end date"),
+        "complaint":                col("complaint/notes"),
+        "complaint_note":           col("complaint/notes"),
+        "permit":                   col("permit"),
+        "total_project":            col("total project"),
+        "to_collect":               col("to collect"),
+        "client_mood":              col("client mood"),
+        "pm_notes":                 col("alfred communication/notes"),
+        "email":                    col("email"),
+        "job_description":          col("scope of work"),
+        "estimator_name":           col("estimator"),
+        "address":                  col("address"),
+        "new_sub":                  col("new sub?"),
+        "sheet_tab":                sheet_tab,
     }
 
 
