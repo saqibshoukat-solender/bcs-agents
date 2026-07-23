@@ -63,7 +63,7 @@ if _db_available:
 
     class CaseyActiveJob(Base):
         __tablename__ = "casey_active_jobs"
-        __table_args__ = (UniqueConstraint("client_name", "pm_name", name="uq_client_pm"),)
+        __table_args__ = (UniqueConstraint("client_name", "sheet_tab", name="uq_client_sheet_tab"),)
 
         id = Column(Integer, primary_key=True)
         client_name = Column(String, nullable=False)
@@ -164,7 +164,7 @@ if _db_available:
 
 # --- In-memory fallback stores ---
 _memory_store: dict[tuple[str, str], list[datetime]] = {}
-_memory_jobs: dict[tuple[str, str], dict] = {}  # keyed by (client_name, pm_name)
+_memory_jobs: dict[tuple[str, str], dict] = {}  # keyed by (client_name, sheet_tab)
 
 
 def _row_to_dict(row: "CaseyActiveJob") -> dict:
@@ -242,6 +242,52 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE casey_active_jobs ADD COLUMN IF NOT EXISTS last_email_subject TEXT"))
             conn.execute(text("ALTER TABLE pm_config ADD COLUMN IF NOT EXISTS display_note TEXT"))
             conn.commit()
+
+            # Change 4: one-time orphan cleanup — per (client_name, sheet_tab) keep only the most
+            # recent row; run BEFORE the constraint migration so there are no duplicates to block it.
+            if not conn.execute(
+                text("SELECT value FROM app_config WHERE key = 'orphan_cleanup_done'")
+            ).fetchone():
+                try:
+                    conn.execute(text("""
+                        DELETE FROM casey_active_jobs
+                        WHERE id NOT IN (
+                            SELECT DISTINCT ON (client_name, COALESCE(sheet_tab,''))
+                                id
+                            FROM casey_active_jobs
+                            ORDER BY client_name, COALESCE(sheet_tab,''),
+                                     synced_at DESC NULLS LAST, id DESC
+                        )
+                    """))
+                    conn.execute(
+                        text("INSERT INTO app_config (key, value) VALUES ('orphan_cleanup_done', 'true')")
+                    )
+                    conn.commit()
+                    logger.info("One-time orphan cleanup: removed duplicate (client_name, sheet_tab) rows")
+                except Exception as _e:
+                    conn.rollback()
+                    logger.warning(f"orphan_cleanup migration: {_e}")
+
+            # Change 4: migrate UNIQUE constraint from (client_name, pm_name) to (client_name, sheet_tab).
+            if not conn.execute(
+                text("SELECT value FROM app_config WHERE key = 'upsert_key_migrated'")
+            ).fetchone():
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE casey_active_jobs DROP CONSTRAINT IF EXISTS uq_client_pm"
+                    ))
+                    conn.execute(text(
+                        "ALTER TABLE casey_active_jobs "
+                        "ADD CONSTRAINT uq_client_sheet_tab UNIQUE (client_name, sheet_tab)"
+                    ))
+                    conn.execute(
+                        text("INSERT INTO app_config (key, value) VALUES ('upsert_key_migrated', 'true')")
+                    )
+                    conn.commit()
+                    logger.info("Migrated UNIQUE constraint: (client_name, pm_name) → (client_name, sheet_tab)")
+                except Exception as _e:
+                    conn.rollback()
+                    logger.warning(f"upsert_key_migrated migration: {_e}")
             # Seed default HubSpot field names if not already set
             _hs_defaults = {
                 "hubspot_field_pm_name":           "pm_name",
@@ -262,6 +308,11 @@ def init_db() -> None:
                 # Sender address used when emailing Chris (must be a Google Workspace
                 # account covered by the service account's domain-wide delegation)
                 "notification_sender_email":    "",
+                # Silent mode — when "true" all Slack messages and Chris notification
+                # emails are suppressed (agents still run and log). Default ON so
+                # nothing goes out on first deploy after a rebuild.
+                "silent_mode":               "true",
+                "silent_mode_toggled_at":    "",
             }
             for key, default_val in _hs_defaults.items():
                 existing = conn.execute(
@@ -701,10 +752,11 @@ def delete_session(token: str) -> None:
 def upsert_active_job(job: dict) -> None:
     client_name = job["client_name"]
     pm_name = job.get("pm_name") or ""
+    sheet_tab = job.get("sheet_tab") or ""
     now = datetime.now(timezone.utc)
 
     if not _db_available:
-        key = (client_name, pm_name)
+        key = (client_name, sheet_tab)
         existing = _memory_jobs.get(key)
         if existing:
             for field in ("job_type", "start_date", "deposit_date", "estimated_start_window",
@@ -713,7 +765,7 @@ def upsert_active_job(job: dict) -> None:
                           "hubspot_deal_id", "hubspot_contact_id", "hubspot_owner_name",
                           "customer_email", "customer_phone", "client_mood", "complaint_note",
                           "job_description", "estimator_name", "to_collect", "total_project",
-                          "sheet_tab", "deadline_to_start"):
+                          "sheet_tab", "deadline_to_start", "pm_name"):
                 existing[field] = job.get(field)
             existing["synced_at"] = now
         else:
@@ -724,12 +776,14 @@ def upsert_active_job(job: dict) -> None:
 
     try:
         with _Session() as session:
+            # Change 4: look up by (client_name, sheet_tab) so PM name changes update in place.
             row = (
                 session.query(CaseyActiveJob)
-                .filter_by(client_name=client_name, pm_name=pm_name)
+                .filter_by(client_name=client_name, sheet_tab=sheet_tab)
                 .first()
             )
             if row:
+                row.pm_name = pm_name  # may have changed; sheet_tab is now the stable key
                 row.job_type = job.get("job_type")
                 row.start_date = job.get("start_date")
                 row.deposit_date = job.get("deposit_date")

@@ -37,30 +37,31 @@ def _get_jobs_from_db(to_start: bool) -> list[dict]:
     if not _db_available:
         return []
     try:
-        from sqlalchemy import or_
         from db.state_store import CaseyActiveJob
-        today_str = date.today().isoformat()
         target_tab = "to_start" if to_start else "in_process"
         with _Session() as s:
             rows = (
                 s.query(CaseyActiveJob)
-                .filter(or_(CaseyActiveJob.sheet_tab == target_tab, CaseyActiveJob.sheet_tab.is_(None)))
+                .filter(CaseyActiveJob.sheet_tab == target_tab)
+                .order_by(CaseyActiveJob.synced_at.desc())
                 .all()
             )
-        result = []
+
+        # Safety-net dedup: keep only the most recent synced_at per (client_name, sheet_tab).
+        # After the upsert_key migration this should never yield duplicates, but just in case.
+        seen: set = set()
+        deduped = []
         for r in rows:
-            if r.sheet_tab is None:
-                # Fallback for rows from before the sheet_tab migration
-                sd = r.start_date or ""
-                if to_start:
-                    # jobs where start_date is null or in the future
-                    if sd and sd <= today_str:
-                        continue
-                else:
-                    # jobs that have started (start_date <= today)
-                    if not sd or sd > today_str:
-                        continue
-            result.append({
+            key = (r.client_name, r.sheet_tab or "")
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+
+        # Final order: client_name ASC
+        deduped.sort(key=lambda r: (r.client_name or "").lower())
+
+        return [
+            {
                 "id": r.id,
                 "client_name": r.client_name,
                 "pm_name": r.pm_name or "",
@@ -86,9 +87,10 @@ def _get_jobs_from_db(to_start: bool) -> list[dict]:
                     "escalation_flag": r.escalation_flag,
                     "last_pm_contact": r.last_pm_contact,
                 }),
-            })
-        return result
-    except Exception as e:
+            }
+            for r in deduped
+        ]
+    except Exception:
         return []
 
 

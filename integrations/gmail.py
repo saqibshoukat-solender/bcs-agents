@@ -53,6 +53,11 @@ def send_email(
     rfc_message_id is the RFC 2822 Message-ID header fetched after the send —
     pass it as message_id next time to maintain the reply chain.
     """
+    from db.state_store import get_config
+    if get_config("silent_mode") == "true":
+        logger.info(f"SILENT MODE — suppressed email to {to_email}")
+        return False, "", ""
+
     import time as _time
 
     def _attempt() -> "tuple[bool, str, str]":

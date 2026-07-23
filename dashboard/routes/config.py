@@ -106,6 +106,50 @@ def _sr_table_html(reps: list) -> str:
     return rows
 
 
+def _silent_mode_html(enabled: bool, toggled_at: str) -> str:
+    """Render the Silent Mode toggle as an HTML fragment for htmx swaps."""
+    if enabled:
+        card_class  = "bg-red-50 border-2 border-red-400"
+        badge_class = "bg-red-600 text-white"
+        badge_text  = "🔇 Silent Mode ACTIVE — no Slack or email alerts going out"
+        btn_text    = "🔔 Disable Silent Mode"
+        btn_class   = "bg-emerald-600 hover:bg-emerald-700 text-white"
+        desc        = "All Slack messages and notification emails are suppressed. Agents run and log normally."
+    else:
+        card_class  = "bg-emerald-50 border-2 border-emerald-300"
+        badge_class = "bg-emerald-600 text-white"
+        badge_text  = "🔔 Silent Mode OFF — alerts active"
+        btn_text    = "🔇 Enable Silent Mode"
+        btn_class   = "bg-red-600 hover:bg-red-700 text-white"
+        desc        = "Slack messages and notification emails are being sent normally."
+
+    timestamp_html = ""
+    if toggled_at:
+        try:
+            dt = datetime.fromisoformat(toggled_at)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            timestamp_html = f'<p class="text-xs text-slate-500 mt-2">Last toggled: {dt.strftime("%b %d, %Y at %H:%M UTC")}</p>'
+        except Exception:
+            pass
+
+    return (
+        f'<div id="silent-mode-controls" class="rounded-2xl p-6 {card_class} mb-4">'
+        f'<div class="flex items-start justify-between gap-4">'
+        f'<div>'
+        f'<span class="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold {badge_class}">{badge_text}</span>'
+        f'<p class="text-sm text-slate-600 mt-2">{desc}</p>'
+        f'{timestamp_html}'
+        f'</div>'
+        f'<button hx-post="/api/config/toggle-silent-mode" hx-target="#silent-mode-controls" hx-swap="outerHTML"'
+        f' class="shrink-0 px-5 py-2.5 text-sm font-semibold rounded-xl shadow-sm transition-all duration-150 {btn_class}">'
+        f'{btn_text}'
+        f'</button>'
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _email_pause_html(paused: bool, paused_at: str) -> str:
     """Render the Operations Controls card as an HTML fragment for htmx swaps."""
     if paused:
@@ -150,6 +194,16 @@ def _email_pause_html(paused: bool, paused_at: str) -> str:
     )
 
 
+@router.post("/api/config/toggle-silent-mode", response_class=HTMLResponse)
+async def toggle_silent_mode():
+    current = (get_config("silent_mode") or "true").strip().lower()
+    new_state = "false" if current == "true" else "true"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    set_config("silent_mode", new_state)
+    set_config("silent_mode_toggled_at", now_iso)
+    return HTMLResponse(_silent_mode_html(new_state == "true", now_iso))
+
+
 @router.post("/api/config/casey/toggle-emails", response_class=HTMLResponse)
 async def toggle_casey_emails():
     current = (get_config("casey_emails_paused") or "true").strip().lower()
@@ -171,6 +225,9 @@ async def config_page(request: Request):
     emails_paused = (db.get("casey_emails_paused") or "true").strip().lower() == "true"
     emails_paused_html = _email_pause_html(emails_paused, db.get("casey_emails_paused_at") or "")
 
+    silent_enabled = (db.get("silent_mode") or "true").strip().lower() == "true"
+    silent_mode_html = _silent_mode_html(silent_enabled, db.get("silent_mode_toggled_at") or "")
+
     return templates.TemplateResponse(request, "config.html", {
         "page": "config",
         "title": "Configurations",
@@ -182,6 +239,7 @@ async def config_page(request: Request):
         "google_sa_email": _google_service_account_email(),
         "cfg": db,
         "emails_paused_html": emails_paused_html,
+        "silent_mode_html": silent_mode_html,
     })
 
 

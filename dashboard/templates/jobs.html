@@ -5,6 +5,18 @@
 
 {% block content %}
 
+{# ── Tab navigation ── #}
+<div class="flex gap-1 mb-4 bg-slate-100 rounded-xl p-1 w-fit">
+  <a href="/jobs/in-process"
+    class="px-4 py-2 text-sm font-semibold rounded-lg transition-colors duration-150 {% if view == 'in_process' %}bg-white text-slate-800 shadow-sm{% else %}text-slate-500 hover:text-slate-700{% endif %}">
+    In Process
+  </a>
+  <a href="/jobs/to-start"
+    class="px-4 py-2 text-sm font-semibold rounded-lg transition-colors duration-150 {% if view == 'to_start' %}bg-white text-slate-800 shadow-sm{% else %}text-slate-500 hover:text-slate-700{% endif %}">
+    To Start
+  </a>
+</div>
+
 <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-900/5 overflow-hidden">
 
   <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">

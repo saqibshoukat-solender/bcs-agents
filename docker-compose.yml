@@ -1,3 +1,8 @@
+# casey and oca are one-shot services — run via cron or dashboard only.
+# do NOT add restart: unless-stopped to these services.
+# On deploy: docker compose up -d postgres dashboard
+# Agents run via: docker compose run --rm casey / docker compose run --rm oca
+
 services:
   postgres:
     image: postgres:15-alpine
