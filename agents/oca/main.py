@@ -253,6 +253,7 @@ def _sync_all(sheet_jobs: list, hs_deals: list) -> dict:
                 "total_project":          job.get("total_project", ""),
                 "sheet_tab":              job.get("sheet_tab", ""),
                 "deadline_to_start":      job.get("deadline_to_start", ""),
+                "primary_job_type":       job.get("primary_job_type", ""),
             })
             synced += 1
         except Exception as e:
